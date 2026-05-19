@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic
+openpyxl
+python-multipart
+redis
+mysql-connector-python

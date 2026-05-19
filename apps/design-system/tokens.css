@@ -1,0 +1,189 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ * design-systems/valuecube/tokens.css
+ *
+ * ValueCube Design System Tokens
+ * Based on VI Standard V1.0 (2026-05-19)
+ *
+ * Color Universe: Deep Navy (#1a1a2e) + Vibrant Orange (#FF6B35)
+ * - Warm-toned brand built for the home appliance B2B data infrastructure
+ * - Professional, trustworthy, data-driven aesthetic
+ *
+ * Key brand decisions:
+ *   1. Primary orange (#FF6B35) as the sole accent — confident, warm, action-oriented
+ *   2. Deep navy (#1a1a2e) as the primary dark surface — not pure black, carries depth
+ *   3. Near-white backgrounds use #f4f4f5 (slightly cool) instead of pure white
+ *   4. Neutral text uses #171717 (not pure black) for reduced eye strain
+ *   5. Border uses #E5E5E5 (soft gray) — visible but not harsh
+ *   6. Functional colors (danger/warn/info) are brand-neutral to not compete
+ *      with the orange accent
+ *
+ * Reference: VI-STANDARD.md at /home/ubuntu/valuecube/docs/VI-STANDARD.md
+ * ─────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ─── Surface ─────────────────────────────────────────────────────
+   * Three-level surface system: dark canvas, elevated surface, light canvas
+   * The dark navy is the primary brand canvas — warm, confident, B2B data */
+  --bg:           #1a1a2e;   /* Deep Navy — primary dark canvas, nav, hero */
+  --bg-light:     #f4f4f5;   /* Cool Gray — light page sections, alternate bg */
+  --surface:      #ffffff;    /* Pure White — cards on light sections */
+  --surface-dark: #232338;   /* Slightly lighter navy — card bg on dark sections */
+  --surface-warm: #f4f4f5;   /* Cool gray — alias for light section surfaces */
+
+  /* ─── Foreground ─────────────────────────────────────────────────
+   * Three-level text hierarchy on light backgrounds
+   * Near-black (#171717) reduces eye strain vs pure black
+   * Muted gray (#737373) for secondary/helper text */
+  --fg:           #171717;   /* Primary text on light backgrounds */
+  --fg-2:         #404040;   /* Secondary text on light backgrounds */
+  --muted:        #737373;   /* Muted/helper text, metadata */
+  --fg-on-dark:   #ffffff;   /* Text on dark backgrounds */
+  --muted-on-dark: rgba(255, 255, 255, 0.6);  /* Muted text on dark */
+
+  /* ─── Border ─────────────────────────────────────────────────────
+   * Soft border system — visible but not competing with content
+   * On dark backgrounds, use very subtle rgba white for elegance */
+  --border:       #E5E5E5;  /* Default border on light backgrounds */
+  --border-strong: #d4d4d4;  /* Stronger border for emphasis */
+  --border-dark:   rgba(255, 255, 255, 0.12); /* Subtle border on dark */
+  --border-soft:   #f4f4f5;  /* Soft divider on light */
+
+  /* ─── Accent (Primary Brand) ──────────────────────────────────────
+   * ValueCube Orange — warm, confident, B2B data infrastructure
+   * Used sparingly: primary CTAs, key statistics, brand moments only
+   * Max 2 visible accent uses per screen (per open-design rule) */
+  --accent:        #FF6B35;  /* ValueCube Orange — primary brand */
+  --accent-hover:  #e55a2b;  /* Darker orange — hover state */
+  --accent-active: #d14f22;  /* Darkest orange — active/press state */
+  --accent-on:     #ffffff;  /* White text on accent fill */
+  --accent-subtle: rgba(255, 107, 53, 0.12); /* Tinted bg for accent tags */
+
+  /* ─── Semantic ───────────────────────────────────────────────────
+   * Brand-neutral functional colors — must not compete with orange
+   * Used for: error states, warnings, informational callouts */
+  --success:  #16a34a;   /* Green — success states */
+  --success-bg: rgba(22, 163, 74, 0.1);
+  --warn:     #D97706;   /* Amber — warnings */
+  --warn-bg:  rgba(217, 119, 6, 0.1);
+  --danger:   #DC2626;   /* Red — errors, destructive actions */
+  --danger-bg: rgba(220, 38, 38, 0.1);
+  --info:     #2563EB;   /* Blue — informational */
+  --info-bg:  rgba(37, 99, 235, 0.1);
+
+  /* ─── Typography ─────────────────────────────────────────────────
+   * Inter + PingFang + Microsoft YaHei — modern, legible, pan-CJK
+   * Display font: same family, differentiated by weight and size
+   * Mono font: for code, statistics, data values */
+  --font-display: "Inter", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "Inter", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+
+  /* Type scale (desktop → mobile)
+   * Based on VI Standard §2: H1=60/36, H2=36/30, H3=18, Body=16 */
+  --text-xs:   12px;    /* Caption, metadata */
+  --text-sm:   14px;    /* Small body, button labels */
+  --text-base: 16px;    /* Body text, base size */
+  --text-lg:   18px;    /* H3, large body */
+  --text-xl:   24px;     /* Subheadings */
+  --text-2xl:  30px;     /* H2 (mobile) */
+  --text-3xl:  36px;     /* H1 (mobile), section titles */
+  --text-4xl:  48px;    /* Statistics display */
+  --text-5xl:  60px;    /* H1 (desktop), hero display */
+
+  /* Line heights */
+  --leading-tight:  1.1;   /* H1, display text */
+  --leading-snug:   1.2;   /* H2, card titles */
+  --leading-normal: 1.4;   /* H3, UI labels */
+  --leading-body:   1.6;   /* Body text, paragraphs */
+  --leading-relaxed: 1.75; /* Long-form content */
+
+  /* Letter spacing */
+  --tracking-tight:   -0.02em;  /* Large display headings */
+  --tracking-normal:  0;         /* Body text */
+  --tracking-wide:    0.02em;   /* Caps, small labels */
+
+  /* ─── Spacing ─────────────────────────────────────────────────────
+   * 4px base grid, matches open-design schema
+   * Section rhythm: 64px mobile → 96px desktop */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ─── Section rhythm ─────────────────────────────────────────────
+   * Vertical rhythm between page sections
+   * 64px mobile → 96px desktop per VI Standard §4 */
+  --section-y-phone:   64px;
+  --section-y-tablet:  80px;
+  --section-y-desktop: 96px;
+
+  /* ─── Border Radius ───────────────────────────────────────────────
+   * Tiered radius system per VI Standard §3
+   * sm: 4px (inputs, tags) / md: 8px (buttons, small cards)
+   * lg: 12px (cards) / xl: 16px (large panels) / full: 9999px (pills) */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-full: 9999px;
+
+  /* ─── Elevation ───────────────────────────────────────────────────
+   * Three-level shadow system
+   * Flat: none (border does the work on light surfaces)
+   * Raised: subtle shadow on hover, cards
+   * Deep: modal, dropdown, floating panels */
+  --elev-flat:  none;
+  --elev-border: 0 0 0 1px var(--border);
+  --elev-raised: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --elev-hover:  0 4px 12px rgba(0, 0, 0, 0.15);
+  --elev-deep:   0 8px 24px rgba(0, 0, 0, 0.2);
+  --elev-nav:    0 2px 8px rgba(0, 0, 0, 0.2);
+
+  /* ─── Focus Ring ──────────────────────────────────────────────────
+   * Orange focus indicator — brand-consistent, WCAG compliant
+   * 3px ring with 40% opacity mix */
+  --focus-ring: 0 0 0 3px color-mix(in oklab, var(--accent), transparent 60%);
+
+  /* ─── Motion ─────────────────────────────────────────────────────
+   * 200ms as base transition — responsive but not rushed
+   * ease-out for entrances, ease-in for exits
+   * No bounce/spring — professional B2B context */
+  --motion-fast:   150ms;
+  --motion-base:   200ms;
+  --motion-slow:   300ms;
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:       cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ─── Layout ─────────────────────────────────────────────────────
+   * 1280px max content width per VI Standard §4
+   * Gutters step down responsively */
+  --container-max:            1280px;
+  --container-gutter-phone:  16px;
+  --container-gutter-tablet: 32px;
+  --container-gutter-desktop: 64px;
+
+  /* ─── Nav ─────────────────────────────────────────────────────────
+   * Sticky top nav, 64px height per VI Standard §3 */
+  --nav-height:    64px;
+  --nav-bg:        rgba(26, 26, 46, 0.92);
+  --nav-blur:      blur(12px);
+
+  /* ─── Z-Index Scale ──────────────────────────────────────────────
+   * Predictable stacking order */
+  --z-base:    0;
+  --z-raised:  10;
+  --z-dropdown: 40;
+  --z-sticky:   50;
+  --z-overlay: 60;
+  --z-modal:    70;
+  --z-toast:    80;
+}

@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ValueCube Design System — Components</title>
+<style>
+/* VC Design System Tokens */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg:           #1a1a2e;
+  --bg-light:     #f4f4f5;
+  --surface:      #ffffff;
+  --surface-dark: #232338;
+  --fg:           #171717;
+  --fg-2:         #404040;
+  --muted:        #737373;
+  --fg-on-dark:   #ffffff;
+  --muted-on-dark: rgba(255, 255, 255, 0.6);
+  --border:       #E5E5E5;
+  --border-dark:  rgba(255, 255, 255, 0.12);
+  --accent:       #FF6B35;
+  --accent-hover: #e55a2b;
+  --accent-active: #d14f22;
+  --accent-on:    #ffffff;
+  --success:  #16a34a;
+  --warn:     #D97706;
+  --danger:   #DC2626;
+  --info:     #2563EB;
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-full: 9999px;
+  --elev-raised: 0 1px 3px rgba(0,0,0,0.1);
+  --elev-hover:  0 4px 12px rgba(0,0,0,0.15);
+  --elev-nav:    0 2px 8px rgba(0,0,0,0.2);
+  --focus-ring:  0 0 0 3px rgba(255, 107, 53, 0.4);
+  --motion-base: 200ms ease;
+  --nav-height:  64px;
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-lg:   18px;
+  --text-xl:   24px;
+  --text-2xl:  30px;
+  --text-3xl:  36px;
+  --text-4xl:  48px;
+  --text-5xl:  60px;
+  --font-body:    "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", "SF Mono", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--fg-on-dark);
+  line-height: 1.6;
+  padding: 40px 24px 80px;
+}
+
+/* ─── Navigation ─────────────────────────────────────────────── */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: var(--nav-height);
+  background: rgba(26, 26, 46, 0.92);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--elev-nav);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 32px;
+  border-radius: var(--radius-lg);
+  margin-bottom: 64px;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 18px;
+  color: white;
+  text-decoration: none;
+}
+.nav-logo {
+  width: 32px;
+  height: 32px;
+  background: var(--accent);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 18px;
+}
+.nav-links {
+  display: flex;
+  gap: 24px;
+  list-style: none;
+  margin-left: auto;
+}
+.nav-links a {
+  color: var(--muted-on-dark);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: color var(--motion-base);
+}
+.nav-links a:hover { color: white; }
+
+/* ─── Section ────────────────────────────────────────────────── */
+.section {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.section-title {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 16px;
+}
+.section-desc {
+  color: var(--muted-on-dark);
+  font-size: var(--text-base);
+  margin-bottom: 48px;
+  max-width: 600px;
+}
+
+/* ─── Buttons ────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background var(--motion-base), transform var(--motion-base), box-shadow var(--motion-base);
+  text-decoration: none;
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-on);
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:active { background: var(--accent-active); transform: scale(0.98); }
+.btn-primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.btn-secondary {
+  background: transparent;
+  color: white;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.1); }
+.btn-secondary:active { background: rgba(255,255,255,0.15); transform: scale(0.98); }
+
+.btn-text {
+  background: transparent;
+  color: var(--accent);
+  padding: 8px 12px;
+}
+.btn-text:hover { text-decoration: underline; }
+
+.btn-group { display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* ─── Cards ──────────────────────────────────────────────────── */
+.card {
+  background: var(--surface-dark);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  box-shadow: var(--elev-raised);
+  transition: box-shadow var(--motion-base), transform var(--motion-base);
+}
+.card:hover {
+  box-shadow: var(--elev-hover);
+  transform: translateY(-2px);
+}
+.card-light {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.card-title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--fg-on-dark);
+}
+.card-light .card-title { color: var(--fg); }
+.card-body {
+  font-size: var(--text-sm);
+  color: var(--muted-on-dark);
+  line-height: 1.6;
+}
+.card-light .card-body { color: var(--muted); }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+@media (max-width: 768px) {
+  .card-grid { grid-template-columns: 1fr; }
+}
+
+/* ─── Badges ─────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+.badge-orange {
+  background: rgba(255, 107, 53, 0.15);
+  color: var(--accent);
+}
+.badge-success {
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--success);
+}
+.badge-warn {
+  background: rgba(217, 119, 6, 0.12);
+  color: var(--warn);
+}
+.badge-danger {
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--danger);
+}
+.badge-info {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--info);
+}
+
+/* ─── Form Inputs ─────────────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--fg-on-dark);
+}
+.field-light label { color: var(--fg); }
+.field input {
+  padding: 12px 16px;
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: white;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  outline: none;
+  transition: border-color var(--motion-base), box-shadow var(--motion-base);
+}
+.field-light input {
+  background: var(--surface);
+  color: var(--fg);
+  border-color: var(--border);
+}
+.field input::placeholder { color: rgba(255,255,255,0.35); }
+.field-light input::placeholder { color: var(--muted); }
+.field input:hover { border-color: rgba(255,255,255,0.3); }
+.field-light input:hover { border-color: #d4d4d4; }
+.field input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.field-help {
+  font-size: var(--text-xs);
+  color: rgba(255,255,255,0.45);
+}
+.field-light .field-help { color: var(--muted); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 640px) {
+  .form-row { grid-template-columns: 1fr; }
+}
+
+/* ─── Statistics ──────────────────────────────────────────────── */
+.stat-number {
+  font-size: var(--text-4xl);
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.stat-label {
+  font-size: var(--text-sm);
+  color: var(--muted-on-dark);
+  margin-top: 8px;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+  padding: 48px;
+  background: var(--surface-dark);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-dark);
+}
+@media (max-width: 640px) {
+  .stat-grid { grid-template-columns: 1fr; padding: 32px 24px; }
+}
+
+/* ─── Color Swatches ─────────────────────────────────────────── */
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+}
+.swatch {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.swatch-color {
+  height: 72px;
+}
+.swatch-info {
+  padding: 10px 12px;
+  background: var(--surface-dark);
+}
+.swatch-name {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--fg-on-dark);
+}
+.swatch-hex {
+  font-size: 11px;
+  color: var(--muted-on-dark);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+/* ─── Hero ───────────────────────────────────────────────────── */
+.hero {
+  text-align: center;
+  padding: 80px 24px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--muted-on-dark);
+  margin-bottom: 24px;
+}
+.hero-badge-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+.hero-title {
+  font-size: var(--text-5xl);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin-bottom: 20px;
+}
+@media (max-width: 640px) {
+  .hero-title { font-size: var(--text-3xl); }
+}
+.hero-sub {
+  font-size: var(--text-lg);
+  color: var(--muted-on-dark);
+  line-height: 1.6;
+  margin-bottom: 40px;
+}
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.hero-stat-row {
+  display: flex;
+  gap: 64px;
+  justify-content: center;
+  margin-top: 64px;
+  padding-top: 64px;
+  border-top: 1px solid var(--border-dark);
+}
+.hero-stat .stat-number { color: var(--accent); font-size: var(--text-4xl); }
+.hero-stat .stat-label { color: var(--muted-on-dark); }
+
+/* ─── Divider ────────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--border-dark);
+  margin: 64px 0;
+}
+
+/* ─── kbd ───────────────────────────────────────────────────── */
+kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-dark);
+  background: var(--surface-dark);
+  color: var(--muted-on-dark);
+}
+</style>
+</head>
+<body>
+
+<!-- ─── Navigation ──────────────────────────────────────────── -->
+<nav class="nav">
+  <a href="#" class="nav-brand">
+    <div class="nav-logo">V</div>
+    ValueCube
+  </a>
+  <ul class="nav-links">
+    <li><a href="#">首页</a></li>
+    <li><a href="#">产品</a></li>
+    <li><a href="#">关于</a></li>
+    <li><a href="#">联系</a></li>
+  </ul>
+</nav>
+
+<!-- ─── Hero ───────────────────────────────────────────────── -->
+<section class="section">
+  <div class="hero">
+    <div class="hero-badge">
+      <span class="hero-badge-dot"></span>
+      家电行业B2B数据基础设施
+    </div>
+    <h1 class="hero-title">家电流通加速器</h1>
+    <p class="hero-sub">50+品牌实时报价 · AI智能解析 · 全渠道供需匹配<br>让信息的流动速度超越货物的物理移动速度</p>
+    <div class="hero-actions">
+      <button class="btn btn-primary">预约演示 →</button>
+      <button class="btn btn-secondary">了解更多</button>
+    </div>
+    <div class="hero-stat-row">
+      <div class="hero-stat">
+        <div class="stat-number">50+</div>
+        <div class="stat-label">合作品牌</div>
+      </div>
+      <div class="hero-stat">
+        <div class="stat-number">94%</div>
+        <div class="stat-label">解析准确率</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ─── Color System ────────────────────────────────────────── -->
+<section class="section">
+  <div class="section-label">§1 色彩系统</div>
+  <h2 class="section-title">Color Palette</h2>
+  <p class="section-desc">品牌双色宇宙：深海军蓝 + 活力橙</p>
+
+  <div class="color-grid">
+    <div class="swatch">
+      <div class="swatch-color" style="background:#FF6B35"></div>
+      <div class="swatch-info"><div class="swatch-name">Primary</div><div class="swatch-hex">#FF6B35</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#e55a2b"></div>
+      <div class="swatch-info"><div class="swatch-name">Primary Hover</div><div class="swatch-hex">#e55a2b</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#1a1a2e"></div>
+      <div class="swatch-info"><div class="swatch-name">Deep Navy</div><div class="swatch-hex">#1a1a2e</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#232338"></div>
+      <div class="swatch-info"><div class="swatch-name">Navy Surface</div><div class="swatch-hex">#232338</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#f4f4f5"></div>
+      <div class="swatch-info"><div class="swatch-name">Cool Gray</div><div class="swatch-hex">#f4f4f5</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#171717"></div>
+      <div class="swatch-info"><div class="swatch-name">Foreground</div><div class="swatch-hex">#171717</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#737373"></div>
+      <div class="swatch-info"><div class="swatch-name">Muted</div><div class="swatch-hex">#737373</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#E5E5E5"></div>
+      <div class="swatch-info"><div class="swatch-name">Border</div><div class="swatch-hex">#E5E5E5</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#16a34a"></div>
+      <div class="swatch-info"><div class="swatch-name">Success</div><div class="swatch-hex">#16a34a</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#D97706"></div>
+      <div class="swatch-info"><div class="swatch-name">Warning</div><div class="swatch-hex">#D97706</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#DC2626"></div>
+      <div class="swatch-info"><div class="swatch-name">Danger</div><div class="swatch-hex">#DC2626</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#2563EB"></div>
+      <div class="swatch-info"><div class="swatch-name">Info</div><div class="swatch-hex">#2563EB</div></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ─── Buttons ─────────────────────────────────────────────── -->
+<section class="section">
+  <div class="section-label">§3 核心组件</div>
+  <h2 class="section-title">Buttons</h2>
+  <p class="section-desc">三种按钮类型：Primary / Secondary / Text</p>
+  <div class="btn-group">
+    <button class="btn btn-primary">主要按钮</button>
+    <button class="btn btn-primary">预约演示 →</button>
+    <button class="btn btn-secondary">次要按钮</button>
+    <button class="btn btn-secondary">了解更多</button>
+    <button class="btn btn-text">文字按钮</button>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ─── Cards ───────────────────────────────────────────────── -->
+<section class="section">
+  <div class="section-label">§3 核心组件</div>
+  <h2 class="section-title">Cards</h2>
+  <p class="section-desc">悬停时上浮 + 阴影加深</p>
+  <div class="card-grid">
+    <div class="card">
+      <div class="badge badge-orange" style="margin-bottom:12px">数据基础设施</div>
+      <h3 class="card-title">标准化商品库</h3>
+      <p class="card-body">统一家电型号格式，跨供应商可比价，AI自动归一化品牌/品类/型号</p>
+    </div>
+    <div class="card">
+      <div class="badge badge-success" style="margin-bottom:12px">实时追踪</div>
+      <h3 class="card-title">价格变动监测</h3>
+      <p class="card-body">每日快照入库，自动标记价格浮动，触发提醒推送</p>
+    </div>
+    <div class="card">
+      <div class="badge badge-info" style="margin-bottom:12px">智能匹配</div>
+      <h3 class="card-title">供需比价引擎</h3>
+      <p class="card-body">多供应商同型号横向对比，历史价格走势可视化，智能推荐最优采购方案</p>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ─── Statistics ───────────────────────────────────────────── -->
+<section class="section">
+  <div class="section-label">§2 字体层级</div>
+  <h2 class="section-title">Statistics Display</h2>
+  <p class="section-desc">橙色大字号数字，页面最强烈的视觉焦点</p>
+  <div class="stat-grid">
+    <div>
+      <div class="stat-number">50+</div>
+      <div class="stat-label">合作品牌</div>
+    </div>
+    <div>
+      <div class="stat-number">94%</div>
+      <div class="stat-label">解析准确率</div>
+    </div>
+    <div>
+      <div class="stat-number">7×24</div>
+      <div class="stat-label">全天候监控</div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ─── Form ────────────────────────────────────────────────── -->
+<section class="section">
+  <div class="section-label">§3 核心组件</div>
+  <h2 class="section-title">Form Fields</h2>
+  <p class="section-desc">深色背景输入框 + focus 状态</p>
+  <div style="max-width:480px">
+    <div class="form-row" style="margin-bottom:16px">
+      <div class="field">
+        <label>型号搜索</label>
+        <input type="text" placeholder="例如：格力 KFR-35GW…">
+      </div>
+      <div class="field">
+        <label>品牌筛选</label>
+        <input type="text" placeholder="例如：格力、美的…">
+      </div>
+    </div>
+    <div class="field" style="margin-bottom:16px">
+      <label>备注（可选）</label>
+      <input type="text" placeholder="补充说明">
+    </div>
+    <button class="btn btn-primary" style="width:100%">搜索报价 →</button>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ─── Badges ──────────────────────────────────────────────── -->
+<section class="section">
+  <div class="section-label">§3 核心组件</div>
+  <h2 class="section-title">Badges</h2>
+  <p class="section-desc">语义化标签</p>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <span class="badge badge-orange">🔥 热门型号</span>
+    <span class="badge badge-success">✓ 已验证</span>
+    <span class="badge badge-warn">⚠ 价格变动</span>
+    <span class="badge badge-danger">✕ 缺货</span>
+    <span class="badge badge-info">ℹ 数据完整</span>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ─── Typography ──────────────────────────────────────────── -->
+<section class="section">
+  <div class="section-label">§2 字体层级</div>
+  <h2 class="section-title">Typography</h2>
+  <p class="section-desc">6级字号体系，Inter + 苹方 + 微软雅黑</p>
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div><span style="font-size:60px;font-weight:700;letter-spacing:-0.02em;color:white">H1 家电流通加速器</span><br><span style="color:rgba(255,255,255,0.4);font-size:12px">60px / 700 / -0.02em</span></div>
+    <div><span style="font-size:36px;font-weight:700;letter-spacing:-0.01em;color:white">H2 合作品牌</span><br><span style="color:rgba(255,255,255,0.4);font-size:12px">36px / 700 / -0.01em</span></div>
+    <div><span style="font-size:18px;font-weight:700;color:white">H3 卡片标题</span><br><span style="color:rgba(255,255,255,0.4);font-size:12px">18px / 700</span></div>
+    <div><span style="font-size:16px;color:rgba(255,255,255,0.6)">Body 正文内容 — 让信息的流动速度超越货物的物理移动速度</span><br><span style="color:rgba(255,255,255,0.4);font-size:12px">16px / 400 / 1.6 line-height</span></div>
+    <div><span style="font-size:14px;color:rgba(255,255,255,0.45)">Small 辅助说明文字</span><br><span style="color:rgba(255,255,255,0.4);font-size:12px">14px / 400</span></div>
+    <div><span style="font-size:12px;color:rgba(255,255,255,0.35);letter-spacing:0.05em;text-transform:uppercase">Caption 小标签</span><br><span style="color:rgba(255,255,255,0.4);font-size:12px">12px / 400 / uppercase</span></div>
+  </div>
+</section>
+
+</body>
+</html>

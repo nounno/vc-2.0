@@ -1,0 +1,1147 @@
+"""
+Pipeline Service — Six-Layer Architecture with Async Intake:
+  Intake Layer → Redis Streams → FormatDetector → ColumnTyper → SemanticMapper → EntityExtractors → QualityRouter
+
+Knowledge Base: Home Appliance SKU Naming Rules (TV / AC / Refrigerator / Washer)
+Sourced from: 家电SKU字典·型号命名规则.docx
+"""
+
+import json
+import re
+import uuid
+from datetime import datetime
+from io import BytesIO
+from typing import Any
+
+import openpyxl
+import redis
+import mysql.connector
+from mysql.connector import pooling
+from fastapi import FastAPI, UploadFile
+from pydantic import BaseModel
+
+app = FastAPI()
+
+# ---------------------------------------------------------------------------
+# Redis Configuration
+# ---------------------------------------------------------------------------
+REDIS_HOST = "redis"
+REDIS_PORT = 6379
+STREAM_KEY = "pipeline:tasks"
+RESULT_PREFIX = "pipeline:result:"
+RESULT_TTL = 86400  # 24 hours
+
+_redis_client = None
+
+
+def get_redis() -> redis.Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    return _redis_client
+
+
+# ---------------------------------------------------------------------------
+# MySQL Configuration (for persisting parsed records)
+# ---------------------------------------------------------------------------
+MYSQL_HOST = "mysql"
+MYSQL_PORT = 3306
+MYSQL_USER = "valuecube"
+MYSQL_PASSWORD = "Vc@2026#db"
+MYSQL_DATABASE = "valuecube"
+
+_db_pool = None
+
+
+def get_db_pool():
+    global _db_pool
+    if _db_pool is None:
+        _db_pool = pooling.MySQLConnectionPool(
+            pool_name="pipeline_pool",
+            pool_size=3,
+            host=MYSQL_HOST,
+            port=MYSQL_PORT,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            database=MYSQL_DATABASE,
+            connection_timeout=10,
+            charset="utf8mb4",
+            collation="utf8mb4_unicode_ci",
+        )
+    return _db_pool
+
+
+def get_db_connection():
+    pool = get_db_pool()
+    return pool.get_connection()
+
+
+def redis_health() -> bool:
+    try:
+        get_redis().ping()
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Request/Response Models
+# ---------------------------------------------------------------------------
+class TaskSubmitResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str
+
+
+class TaskResultResponse(BaseModel):
+    task_id: str
+    status: str
+    result: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: Intake Layer
+# ---------------------------------------------------------------------------
+class IntakeLayer:
+    """Reads the uploaded file and returns raw rows + extension.
+
+    Handles merged cells by filling down/right the top-left cell value.
+    Skips leading title rows (non-tabular header rows with large text).
+    Returns (rows, ext) where rows[0] = column headers.
+    """
+
+    def load(self, file_content: bytes, filename: str) -> tuple[list[tuple[str, list[list[str]]]], str]:
+        """Read xlsx/xls file. Handles merged cells, forward-fill, multi-sheet.
+        Returns list of (sheet_name, rows) tuples - one per data sheet (skip导航/目录 sheet).
+        Each rows list has headers at index 0.
+        """
+        ext = filename.lower().split(".")[-1]
+        wb = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
+
+        SKIP_SHEET_KEYWORDS = ["目录", "导航", "index", "cover", "首页"]
+
+        sheet_data = []
+
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+
+            # Skip navigation/cover sheets
+            if any(kw in sheet_name.lower() for kw in SKIP_SHEET_KEYWORDS):
+                continue
+
+            # ── Build cell-value map ─────────────────────────────────────────
+            cell_values = {}
+            for row_cells in ws.iter_rows():
+                for cell in row_cells:
+                    cell_values[(cell.row, cell.column)] = (
+                        str(cell.value) if cell.value is not None else ""
+                    )
+
+            # ── Fill merged cells with top-left value ─────────────────────────
+            for merged_range in ws.merged_cells.ranges:
+                min_r, min_c = merged_range.min_row, merged_range.min_col
+                top_val = cell_values.get((min_r, min_c), "")
+                for r in range(min_r, merged_range.max_row + 1):
+                    for c in range(min_c, merged_range.max_col + 1):
+                        if (r, c) not in cell_values:
+                            cell_values[(r, c)] = top_val
+
+            max_row = ws.max_row
+            max_col = ws.max_column
+
+            # ── Forward-fill vertical spans (品类/品牌纵向合并格) ─────────────
+            FILL_COLS = {1, 2}
+            for col in FILL_COLS:
+                last_val = ""
+                for r in range(1, max_row + 1):
+                    v = cell_values.get((r, col), "")
+                    if v.strip():
+                        last_val = v.strip()
+                    else:
+                        cell_values[(r, col)] = last_val
+
+            # ── Detect header row ─────────────────────────────────────────────
+            HEADER_MIN_NONEMPTY_RATIO = 0.20
+            HEADER_MIN_LABEL_RATIO = 0.40
+            header_row_idx = None
+            for r in range(1, min(max_row + 1, 20)):
+                row_vals = [cell_values.get((r, c), "") for c in range(1, max_col + 1)]
+                non_empty = [v for v in row_vals if v.strip()]
+                if not non_empty:
+                    continue
+                nonempty_ratio = len(non_empty) / max_col
+                label_ratio = sum(1 for v in non_empty if len(v) < 50) / len(non_empty)
+                # Skip merged title rows: very few non-empty cells (spread < 35%)
+                # e.g. "库存表" merged across 17 columns → spread=1/17=6%
+                if nonempty_ratio < 0.35 and len(non_empty) < 5:
+                    continue
+                if (nonempty_ratio > HEADER_MIN_NONEMPTY_RATIO and
+                        label_ratio >= HEADER_MIN_LABEL_RATIO):
+                    header_row_idx = r
+                    break
+
+            if header_row_idx is None:
+                header_row_idx = 1
+
+            # ── Collect rows for this sheet ─────────────────────────────────
+            sheet_rows = []
+            for r in range(header_row_idx, max_row + 1):
+                row = [cell_values.get((r, c), "") for c in range(1, max_col + 1)]
+                sheet_rows.append(row)
+
+            sheet_data.append((sheet_name, sheet_rows))
+
+        return sheet_data, ext
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: Format Detector
+# ---------------------------------------------------------------------------
+class FormatDetector:
+    """Detects the file format."""
+
+    def detect(self, ext: str) -> str:
+        if ext in ("xlsx", "xls"):
+            return "excel"
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Layer 3: Column Typer
+# ---------------------------------------------------------------------------
+class ColumnTyper:
+    """Infers column types based on header names and sample values."""
+
+    PRICE_RE = re.compile(r"^[\d,．.．]+$")
+    INT_RE = re.compile(r"^\d+$")
+
+    def infer(self, headers: list[str], rows: list[list[str]]) -> dict[int, str]:
+        mapping = {}
+        for i, h in enumerate(headers):
+            h_lower = h.lower().strip()
+            # 品牌
+            if re.search(r"品牌|brand|厂商", h_lower):
+                mapping[i] = "brand"
+            # 品类（一级分类）
+            elif re.search(r"品类|category|分类|类型", h_lower):
+                mapping[i] = "category"
+            # 型号
+            elif re.search(r"型号|model|货号|款式", h_lower):
+                mapping[i] = "model"
+            # 价格（支持多种列名）
+            elif re.search(r"价格|price|售价|单价|批发价|开票价|工程价|今日批价|供货价", h_lower):
+                mapping[i] = "price"
+            # 库存/数量
+            elif re.search(r"库存|stock|数量|存货|销量", h_lower):
+                mapping[i] = "stock"
+            else:
+                # Try to infer from values
+                sample_vals = [row[i] if i < len(row) else "" for row in rows[:5]]
+                if all(self.PRICE_RE.match(v) for v in sample_vals if v):
+                    mapping[i] = "price"
+                elif all(self.INT_RE.match(v) for v in sample_vals if v):
+                    mapping[i] = "stock"
+                else:
+                    mapping[i] = "text"
+        return mapping
+
+# ---------------------------------------------------------------------------
+# Layer 4: Semantic Mapper
+# ---------------------------------------------------------------------------
+KNOWN_BRANDS = {
+    "美的", "格力", "海尔", "海信", "小米", "华为", "华凌", "华帝", "华蒜",
+    "长虹", "TCL", "奥克斯", "志高", "新飞", "美菱", "容声",
+    "松下", "索尼", "飞利浦", "博世", "西门子", "三星", "LG",
+    "东芝", "卡萨帝", "COLMO", "统帅", "小天鹅", "小吉", "石头",
+    "创维", "海信", "康佳", "康宝", "星星", "美菱", "奥马", "新科",
+    "扬子", "科龙", "万和", "万家乐", "方太", "老板", "华帝",
+    "林内", "能率", "史密斯", "沁园", "安吉尔", "云米", "佳尼特",
+    "火星人", "森歌", "美大", "名气", "雷鸟", "VIDAA", "酷开",
+    "乐华", "哈士奇", "微果", "西屋",
+}
+KNOWN_CATEGORIES = {
+    "空调", "冰箱", "洗衣机", "热水器", "电视投影", "厨房大电",
+    "冷柜", "冰吧", "消毒柜", "洗碗机", "净水器", "烟机", "灶具",
+    "集成灶", "投影仪", "电视", "管线机", "中央空调", "移动空调",
+    "挂机", "柜机", "滚筒洗衣机", "波轮洗衣机", "洗烘一体机", "洗烘套装",
+    "烘干机", "迷你洗衣机", "全自动洗衣机", "半自动",
+    "电热水器", "燃气热水器", "空气能热水器", "壁挂炉",
+    "十字门", "法式", "对开门", "三门", "双门", "单门", "异型门",
+    "冷柜/冰吧", "展示柜", "嵌入式微蒸烤", "蒸烤一体机", "懒人三筒", "集成水槽",
+    "子母双筒", "方型柜式", "壁挂式", "圆柱立式",
+}
+# ─────────────────────────────────────────────────────────────────────────────
+# Knowledge Base: Home Appliance SKU Naming Rules
+# Source: 家电SKU字典·型号命名规则.docx (2026-05-19)
+# ─────────────────────────────────────────────────────────────────────────────
+
+## ── TV (Television) ──────────────────────────────────────────────────────────
+# Structure: Brand prefix + Screen size (inch) + Series + Gen/Suffix
+# No mandatory national standard; each brand has its own system.
+TV_BRAND_PREFIXES = {
+    "TCL":         "TCL",
+    "海信":        "海信",
+    "Hisense":     "海信",
+    "创维":        "创维",
+    "Skyworth":    "创维",
+    "华为":        "华为",
+    "华为智慧屏":  "华为",
+    "小米":        "小米",
+    "小米电视":    "小米",
+    "三星":        "三星",
+    "Samsung":      "三星",
+    "LG":          "LG",
+    "索尼":        "索尼",
+    "Sony":        "索尼",
+    "索尼电视":    "索尼",
+}
+# TV model patterns: extract size (leading digits), infer series from brand
+TV_SIZE_RE = re.compile(r"^(\d{2,3})(?:\s|英寸|寸)?")
+# TCL: Q=QD-MiniLED旗舰, T=中高端, V=入门; K=2024, L=2025
+# 海信: U=ULED旗舰, E=线上主力, L=激光; N=2024, Q=2025
+# 创维: A=壁纸艺术, G=MiniLED性价比, Q=旗舰, X=OLED高端
+# 华为: X=顶尖科技, V=旗舰影院, S=年轻潮流, SE=入门
+# 小米: 大师=旗舰, S=性价比, A=入门
+# 三星: QN=NeoQLED, UA=LED; D=2024, F=2025
+# LG: G=旗舰(2025=G5), C=主流(C5), B=入门; OLED/QNED
+# 索尼: KD=4K液晶, XR=XR认知芯片; 8Ⅱ=8系二代旗舰, 7Ⅱ=7系MiniLED
+TV_SERIES_KEYWORDS = {
+    "Q": ["TCL", "海信"],   # 线上旗舰/高端
+    "E": ["海信"],           # 线上主力
+    "A": ["创维", "华为"],   # 艺术/入门
+    "G": ["创维", "小米"],   # MiniLED性价比
+    "S": ["小米", "华为"],   # 性价比/年轻
+    "V": ["华为"],           # 旗舰影院
+    "X": ["华为", "LG"],     # 顶尖旗舰
+    "QN": ["三星"],          # NeoQLED
+    "UA": ["三星"],          # LED液晶
+}
+
+## ── Air Conditioner (分体式) ────────────────────────────────────────────────
+# National Standard GB/T 7725:
+#   K F R - [制冷量] G/L W / [品牌后缀]
+#   K=空调器, F=分体式, R=热泵型(冷暖), 数字=百瓦(35=1.5P, 26=1P, 50=2P, 72=3P)
+#   G=挂机, L=柜机, W=室外机
+AC_NATIONAL_STANDARD = re.compile(
+    r"^(KF|KFR|KFRd|KFRBd|KD)-\d{2,3}GW|LW"
+)
+AC_HP_FROM_CAPTION = {"23": "小1匹", "26": "1匹", "32": "1.5匹", "35": "正1.5匹",
+                       "50": "2匹", "72": "3匹", "大字": "3匹+"}
+# Gree: 云佳(入门), 云锦(中高端), 云逸, 全能王(旗舰65°C); 严格遵循国标
+# Midea: 酷省电(节能), 风尊(180°旋转), 静新风; 严格遵循国标
+# Haier: 麦浪(UWB人感), 劲爽(快冷热), 洗空气; 严格遵循国标
+# AUX: 京岳(主流); 遵循国标
+# Xiaomi: 国标认证型号+KFR-35GW/N1A1等; 营销名另起; 代工厂A/HN1=长虹,C=海信,X=TCL
+# Daikin: 自有体系FTXP开头; 横纲Z=旗舰, 衡境=静音; VRV=多联中央空调注册商标
+# Hitachi: RAS开头(分体), RA(窗口), RCI(中央空调内机)
+# Panasonic: 遵循国标+自有代码; VX=旗舰声控, 滢风Pro, 飓能星, 净悦星
+# Mitsubishi E: MS开头(挂/柜机), MXZ(中央空调外机); AHJ/ZFJ=挂机经典
+AC_BRANDS_HIERARCHY = {
+    "格力": {"正道": "KFR-数字GW", "系列": ["云佳", "云锦", "云逸", "全能王"]},
+    "美的": {"正道": "KFR-数字GW", "系列": ["酷省电", "风尊", "静新风"]},
+    "海尔": {"正道": "KFR-数字GW", "系列": ["麦浪", "劲爽", "洗空气"]},
+    "奥克斯": {"正道": "KFR-数字GW", "系列": ["京岳"]},
+    "小米": {"正道": "KFR-数字GW/N后缀", "系列": ["巨省电", "自然风", "新风空调"], "代工厂": {"A": "长虹", "HN1": "长虹", "C": "海信", "X": "TCL"}},
+    "大金": {"正道": "FTXP/RXP开头", "系列": ["横纲Z", "衡境"]},
+    "日立": {"正道": "RAS/RA/RCI", "系列": []},
+    "松下": {"正道": "CS-/CU-", "系列": ["VX", "滢风Pro", "飓能星", "净悦星"]},
+    "三菱电机": {"正道": "MS-/MXZ", "系列": ["AHJ", "ZFJ"]},
+}
+
+## ── Refrigerator ─────────────────────────────────────────────────────────────
+# National Standard:
+#   B C D - [容积L] [后缀]
+#   B=冰箱, C=冷藏, D=冷冻; BC=仅冷藏, BD=仅冷冻(冷柜)
+#   后缀: W=风冷, P=变频, T=多门/三门, K=对开门, G=玻璃门
+RFR_NATIONAL = re.compile(r"^BCD?-\d+")
+# ⚠️ CRITICAL陷阱: "双风路循环" ≠ "双循环/双系统" (后者才是双蒸发器防串味)
+# 海尔: 麦浪(594mm零嵌+全空间保鲜), 星蕴; 严格遵循国标BCD-
+# 美的: M60(600mm超薄), 慧鲜; 严格遵循
+# 容声: 方糖(高颜值保鲜); 严格遵循
+# 海信: 真空保鲜; 严格遵循
+# COLMO: CRBF开头; 美的旗下AI高端
+# 卡萨帝: 原石/揽光系列(法式多门标杆); 海尔高端
+# 松下: BCD-和NR-双前缀共存; C=三门, E=多门; NORUVISEA™=2025旗舰
+# 三星: RS=对开门, RF=多门(FrenchDoor), RB=另有; 低端用BCD-
+# LG: NR-/GR-全线, S=对开门, M=多门
+# 西门子: K开头(独立); K=冰箱, A=对开门, 数字≈容积; IQ100/300/500/700分级; 无界=平嵌旗舰
+# 博世: 与西门子同平台; 2/4/6/8系从低到高; M8/M7=极限嵌入旗舰
+RFR_DOOR_TYPES = {
+    "T": "三门",
+    "K": "对开门",
+    "十字": "十字对开",
+    "法式": "法式多门",
+    "对开": "对开门",
+    "多门": "多门",
+}
+RFR_BRANDS_HIERARCHY = {
+    "海尔": {"正道": "BCD-数字", "系列": ["麦浪", "星蕴"], "卖点": ["零嵌", "全空间保鲜"]},
+    "美的": {"正道": "BCD-数字", "系列": ["M60", "慧鲜"]},
+    "容声": {"正道": "BCD-数字", "系列": ["方糖", "原鲜"]},
+    "海信": {"正道": "BCD-数字", "系列": ["真空保鲜"]},
+    "COLMO": {"正道": "CRBF", "系列": []},
+    "卡萨帝": {"正道": "BCD-数字", "系列": ["原石", "揽光"], "卖点": ["法式多门", "全空间保鲜"]},
+    "松下": {"正道": "BCD-|NR-", "系列": ["NORUVISEA"]},
+    "三星": {"正道": "RS|RF|RB", "系列": []},
+    "LG": {"正道": "NR-|GR-", "系列": []},
+    "西门子": {"正道": "K.\\d+", "系列": ["IQ100", "IQ300", "IQ500", "IQ700", "无界"]},
+    "博世": {"正道": "K.\\d+", "系列": ["2系", "4系", "6系", "8系", "全域智净"]},
+}
+
+## ── Washer ──────────────────────────────────────────────────────────────────
+# National Standard:
+#   X Q G/B - [容量kg] [后缀]
+#   X=洗衣机, Q=全自动, G=滚筒, B=波轮; 容量数字=额定洗涤容量(kg)
+# 小天鹅: TD=洗烘一体, TG=单滚筒, TB=波轮; 水魔方(冷水护色), 小蓝鲸(蓝氧防串)
+# 西门子: WM(大容量)/WS(小容量)+国标型号; iQ300/500/700/800分级; 摩德纳系列
+# LG: A/C/T/N+转速数字; DD直驱是其核心技术标签
+# 海尔: HBD=烘一体, S=双动力; 朗境X11(风巡航防霉), 卡萨帝双子云裳(上下双筒)
+WASHER_NATIONAL = re.compile(r"^XQG?-\d+")
+WASHER_TYPES = {
+    "XQG": "滚筒全自动",
+    "XQB": "波轮",
+    "TG": "小天鹅单滚筒",
+    "TD": "小天鹅洗烘一体",
+    "TB": "小天鹅波轮",
+    "WM": "西门子大容量",
+    "WS": "西门子小容量",
+}
+WASHER_BRANDS_HIERARCHY = {
+    "海尔": {"正道": "XQG-数字", "系列": ["朗境X11", "卡萨帝双子云裳"], "后缀": {"HBD": "烘一体", "S": "双动力"}},
+    "小天鹅": {"正道": "TD|TG|TB-数字", "系列": ["水魔方", "小蓝鲸"]},
+    "美的": {"正道": "MG|MB-数字", "系列": []},
+    "小米": {"正道": "XQG-数字", "系列": ["巨省电"]},
+    "西门子": {"正道": "WM|WS|XQG", "系列": ["iQ300", "iQ500", "iQ700", "iQ800", "摩德纳"]},
+    "博世": {"正道": "XQG", "系列": ["2系", "4系", "6系", "8系"]},
+    "LG": {"正道": "WD|A.|C.", "系列": ["DD直驱", "CFC直驱"]},
+    "松下": {"正道": "XQG-数字", "系列": ["罗密欧", "ALPHA G5"]},
+}
+
+## ── Unified Brand Registry ───────────────────────────────────────────────────
+KNOWN_BRANDS = {
+    # 空调主流
+    "美的", "格力", "海尔", "海信", "小米", "华为", "华凌", "奥克斯",
+    "大金", "日立", "松下", "三菱电机", "三菱", "志高", "长虹", "TCL",
+    # 冰箱
+    "容声", "美菱", "COLMO", "卡萨帝", "新飞", "奥马",
+    # 洗衣机
+    "小天鹅", "小吉", "石头", "西门子", "博世", "LG", "惠而浦",
+    # 电视
+    "创维", "康佳", "三星", "LG", "索尼", "夏普", "雷鸟", "VIDAA", "酷开",
+    # 厨卫/热水器
+    "华帝", "华蒜", "万和", "万家乐", "方太", "老板", "林内", "能率", "史密斯",
+    "沁园", "安吉尔", "云米", "佳尼特", "火星人", "森歌", "美大",
+    # 冷柜
+    "星星", "美菱", "新科",
+    # 互联网/其他
+    "扬子", "科龙", "乐华", "哈士奇", "微果", "西屋",
+}
+
+## ── Category Inference ──────────────────────────────────────────────────────
+# From product model naming rules + keyword match
+CATEGORY_RULES = {
+    "ac": {
+        "names": ["空调", "冷暖", "挂机", "柜机", "分体机", "中央空调", "移动空调"],
+        "model_prefixes": ["KFR", "KF", "KFRd", "KFRBd", "KD", "RAS", "RA", "CS-", "CU-", "MSZ", "MXZ"],
+        "door_types": ["挂机", "柜机"],
+    },
+    "refrigerator": {
+        "names": ["冰箱", "冷柜", "冰吧", "展示柜", "冷藏箱", "冷冻箱"],
+        "model_prefixes": ["BCD", "BC", "BD", "NR-", "GR-", "RS", "RF", "RB", "CRBF", "KA"],
+        "door_types": ["单门", "双门", "三门", "对开", "十字", "法式", "多门"],
+    },
+    "washer": {
+        "names": ["洗衣机", "洗烘", "烘干机", "干衣机", "迷你洗衣机"],
+        "model_prefixes": ["XQG", "XQB", "TG", "TD", "TB", "WM", "WS", "WD"],
+        "door_types": ["滚筒", "波轮", "搅拌式"],
+    },
+    "tv": {
+        "names": ["电视", "电视机", "智慧屏", "投影", "激光电视"],
+        "model_prefixes": [],
+        "door_types": [],
+    },
+}
+
+## ── Cross-Category Confusion Pairs (易混淆品类) ────────────────────────────
+# These model prefixes appear in multiple contexts; use category keywords to disambiguate
+AMBIGUOUS_PREFIXES = {
+    "KFR": "ac",
+    "KF":  "ac",
+    "BCD": "refrigerator",
+    "XQG": "washer",
+}
+
+## ── Marketing Trap Detection ────────────────────────────────────────────────
+MARKETING_TRAPS = [
+    ("双风路循环", "双循环/双系统", "冰箱"),
+    ("不提分区数的MiniLED", "有真实分区数", "电视"),
+    ("一晚一度电", "实测耗电量", "空调"),
+    ("等效刷新率", "原生刷新率", "电视"),
+    ("磨号", "正常序列号", "通用"),
+]
+
+
+PRICE_RANGE = (50, 100000)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Decoder — uses SKU naming rules to decode model strings
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ModelDecoder:
+    """
+    Decodes home appliance model strings using the SKU naming rule knowledge base.
+    Returns structured entity + reasoning chain.
+    """
+
+    def __init__(self, brand: str = "", model: str = "", category_hint: str = ""):
+        self.brand = brand
+        self.model = (model or "").strip()
+        self.category_hint = category_hint
+        self.reasoning = []
+
+    # ── Category Inference ─────────────────────────────────────────────────
+
+    def infer_category(self) -> str:
+        """Infer product category from model prefix + brand."""
+        m = self.model.upper()
+
+        # 1. Check model prefix
+        for prefix, cat in AMBIGUOUS_PREFIXES.items():
+            if m.startswith(prefix.upper()):
+                self.reasoning.append(f"前缀{prefix}→{cat}")
+                return cat
+
+        # 2. Check category keywords in model
+        for cat, rules in CATEGORY_RULES.items():
+            for kw in rules.get("model_prefixes", []):
+                if kw.upper() in m:
+                    self.reasoning.append(f"型号含{kw}→{cat}")
+                    return cat
+
+        # 3. Check brand→category affinity
+        brand_cat = {
+            "格力": "ac", "美的": "ac", "海尔": "ac", "大金": "ac", "奥克斯": "ac",
+            "海信": "refrigerator", "容声": "refrigerator", "美菱": "refrigerator",
+            "小天鹅": "washer", "西门子": "washer", "博世": "washer",
+            "TCL": "tv", "创维": "tv", "海信": "tv", "三星": "tv", "LG": "tv",
+        }
+        inferred = brand_cat.get(self.brand, "")
+        if inferred:
+            self.reasoning.append(f"品牌{self.brand}→{inferred}")
+            return inferred
+
+        return "unknown"
+
+    # ── AC Model Decoder ──────────────────────────────────────────────────
+
+    def decode_ac(self) -> dict[str, Any]:
+        """Decode KFR/KF/KF Rd series AC model."""
+        m = self.model
+        result = {"horsepower": "", "type": "", "brand_series": "", "oem_factory": ""}
+
+        # Extract horsepower: digits before GW/LW
+        hp_match = re.search(r"(\d{2,3})\s*(?:GW|LW)", m, re.IGNORECASE)
+        if hp_match:
+            digits = hp_match.group(1)
+            result["horsepower"] = AC_HP_FROM_CAPTION.get(digits, f"{int(digits)//100}匹")
+            self.reasoning.append(f"匹数{digits}→{result['horsepower']}")
+
+        # Indoor unit type
+        if "GW" in m.upper():
+            result["type"] = "挂壁式"
+            self.reasoning.append("室内机类型: 挂机(G)")
+        elif "LW" in m.upper():
+            result["type"] = "落地式"
+            self.reasoning.append("室内机类型: 柜机(L)")
+
+        # Brand series from suffix
+        if self.brand in AC_BRANDS_HIERARCHY:
+            series_map = AC_BRANDS_HIERARCHY[self.brand].get("系列", [])
+            for s in series_map:
+                if s in m:
+                    result["brand_series"] = s
+                    self.reasoning.append(f"检测到系列: {s}")
+                    break
+
+        # OEM factory detection (Xiaomi)
+        if self.brand == "小米":
+            oem_map = AC_BRANDS_HIERARCHY["小米"].get("代工厂", {})
+            for code, factory in oem_map.items():
+                if code in m:
+                    result["oem_factory"] = factory
+                    self.reasoning.append(f"代工厂: {factory}({code})")
+                    break
+
+        return result
+
+    # ── Refrigerator Model Decoder ────────────────────────────────────────
+
+    def decode_rfr(self) -> dict[str, Any]:
+        """Decode BCD series refrigerator model."""
+        m = self.model
+        result = {"volume_l": "", "door_type": "", "cooling": "", "brand_series": ""}
+
+        # Extract volume
+        vol_match = re.search(r"BCD?-\s*(\d+)", m, re.IGNORECASE)
+        if not vol_match:
+            vol_match = re.search(r"(\d{3,4})\s*(?:L|升|瓦)", m, re.IGNORECASE)
+        if vol_match:
+            result["volume_l"] = vol_match.group(1) + "L"
+            self.reasoning.append(f"容积: {result['volume_l']}")
+
+        # Door type from suffix
+        for code, dtype in RFR_DOOR_TYPES.items():
+            if code in m:
+                result["door_type"] = dtype
+                self.reasoning.append(f"门型: {dtype}({code})")
+                break
+
+        # Cooling type
+        if "W" in m:
+            result["cooling"] = "风冷"
+            self.reasoning.append("制冷: 风冷(W)")
+        if "Z" in m or "P" in m:
+            result["cooling"] = result.get("cooling", "") + "变频"
+            self.reasoning.append("变频: 是")
+
+        # Brand series
+        if self.brand in RFR_BRANDS_HIERARCHY:
+            for s in RFR_BRANDS_HIERARCHY[self.brand].get("系列", []):
+                if s in m:
+                    result["brand_series"] = s
+                    self.reasoning.append(f"系列: {s}")
+                    break
+
+        return result
+
+    # ── Washer Model Decoder ───────────────────────────────────────────────
+
+    def decode_washer(self) -> dict[str, Any]:
+        """Decode XQG series washer model."""
+        m = self.model
+        result = {"capacity_kg": "", "type": "", "brand_series": "", "special": ""}
+
+        # Extract capacity
+        cap_match = re.search(r"XQG?-?\s*(\d+)", m, re.IGNORECASE)
+        if cap_match:
+            result["capacity_kg"] = cap_match.group(1) + "kg"
+            self.reasoning.append(f"洗涤容量: {result['capacity_kg']}")
+
+        # Type
+        for code, wtype in WASHER_TYPES.items():
+            if code in m:
+                result["type"] = wtype
+                self.reasoning.append(f"类型: {wtype}")
+                break
+
+        # Brand series
+        if self.brand in WASHER_BRANDS_HIERARCHY:
+            for s in WASHER_BRANDS_HIERARCHY[self.brand].get("系列", []):
+                if s in m:
+                    result["brand_series"] = s
+                    self.reasoning.append(f"系列: {s}")
+                    break
+
+        # Special suffix (HBD=烘一体, S=双动力, etc.)
+        if self.brand == "海尔":
+            suffixes = WASHER_BRANDS_HIERARCHY["海尔"].get("后缀", {})
+            for code, meaning in suffixes.items():
+                if code in m:
+                    result["special"] = meaning
+                    self.reasoning.append(f"功能: {meaning}({code})")
+
+        return result
+
+    # ── TV Model Decoder ───────────────────────────────────────────────────
+
+    def decode_tv(self) -> dict[str, Any]:
+        """Decode TV model string (no national standard, brand-specific)."""
+        m = self.model
+        result = {"size_inch": "", "series": "", "gen_code": ""}
+
+        # Extract screen size
+        size_match = TV_SIZE_RE.match(m)
+        if size_match:
+            result["size_inch"] = size_match.group(1) + "英寸"
+            self.reasoning.append(f"屏幕尺寸: {result['size_inch']}")
+
+        # Series detection
+        for series_code, brands in TV_SERIES_KEYWORDS.items():
+            if self.brand in brands and series_code in m:
+                result["series"] = series_code
+                self.reasoning.append(f"系列代码: {series_code} ({self.brand})")
+                break
+
+        # Year code
+        year_codes = {"K": "2024", "L": "2025", "D": "2024", "F": "2025", "N": "2024", "Q": "2025"}
+        for code, year in year_codes.items():
+            if code in m:
+                result["gen_code"] = f"{year}年款"
+                self.reasoning.append(f"年份: {result['gen_code']}({code})")
+                break
+
+        return result
+
+    # ── Full Decode Dispatch ───────────────────────────────────────────────
+
+    def decode(self) -> dict[str, Any]:
+        """Run full decode pipeline."""
+        category = self.infer_category()
+
+        decoded = {
+            "brand": self.brand,
+            "model": self.model,
+            "category": category,
+            "specs": {},
+            "marketing_traps": [],
+            "reasoning": self.reasoning,
+        }
+
+        if category == "ac":
+            decoded["specs"] = self.decode_ac()
+        elif category == "refrigerator":
+            decoded["specs"] = self.decode_rfr()
+        elif category == "washer":
+            decoded["specs"] = self.decode_washer()
+        elif category == "tv":
+            decoded["specs"] = self.decode_tv()
+
+        # Check marketing traps
+        for trap, genuine, apply_to in MARKETING_TRAPS:
+            if trap in self.model and (apply_to == "通用" or apply_to == category):
+                decoded["marketing_traps"].append({
+                    "trap": trap,
+                    "genuine_meaning": genuine,
+                    "category": apply_to,
+                })
+                self.reasoning.append(f"⚠️ 陷阱检测: '{trap}' (≠{genuine})")
+
+        return decoded
+
+
+def decode_model(brand: str, model: str, category_hint: str = "") -> dict[str, Any]:
+    """Convenience wrapper for ModelDecoder."""
+    decoder = ModelDecoder(brand=brand, model=model, category_hint=category_hint)
+    return decoder.decode()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Legacy Variables (kept for backward compatibility with existing code)
+# ─────────────────────────────────────────────────────────────────────────────
+AC_REGEX = re.compile(r"KFR|KF-|空调|挂机|柜机|分体", re.IGNORECASE)
+
+
+def clean_price(v: str) -> float | None:
+    if not v:
+        return None
+    cleaned = re.sub(r"[^\d.]", "", v)
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def clean_int(v: str) -> int | None:
+    if not v:
+        return None
+    cleaned = re.sub(r"[^\d]", "", v)
+    try:
+        return int(cleaned)
+    except ValueError:
+        return None
+
+
+class SemanticMapper:
+    def map(self, col_type: str, raw_value: str, row_idx: int) -> dict[str, Any]:
+        if not raw_value or raw_value.strip() == "":
+            return {"value": None, "confidence": 0.0}
+
+        if col_type == "brand":
+            brand = raw_value.strip()
+            conf = 0.98 if brand in KNOWN_BRANDS else 0.70
+            return {"value": brand, "confidence": conf}
+
+        elif col_type == "category":
+            cat = raw_value.strip()
+            conf = 0.98 if cat in KNOWN_CATEGORIES else 0.70
+            return {"value": cat, "confidence": conf}
+
+        elif col_type == "model":
+            model = raw_value.strip()
+            conf = 0.92 if model else 0.60
+            return {"value": model, "confidence": conf}
+
+        elif col_type == "price":
+            price = clean_price(raw_value)
+            if price is None:
+                return {"value": None, "confidence": 0.0}
+            in_range = PRICE_RANGE[0] <= price <= PRICE_RANGE[1]
+            conf = 0.90 if in_range else 0.50
+            return {"value": price, "confidence": conf}
+
+        elif col_type == "stock":
+            stock = clean_int(raw_value)
+            if stock is None:
+                return {"value": None, "confidence": 0.0}
+            conf = 0.90 if 0 <= stock <= 99999 else 0.50
+            return {"value": stock, "confidence": conf}
+
+        else:
+            return {"value": raw_value.strip(), "confidence": 0.60}
+
+
+# ---------------------------------------------------------------------------
+# Layer 5: Entity Extractor
+# ---------------------------------------------------------------------------
+class EntityExtractor:
+    def __init__(self, col_mapping: dict[int, str]):
+        self.col_mapping = col_mapping
+
+    def extract(self, row: list[str], row_idx: int, sheet_name: str = "Sheet1") -> tuple[dict[str, Any], list[str]]:
+        mapper = SemanticMapper()
+        raw_fields = {}
+        parsed_entities = {}
+        reasoning = []
+
+        for col_idx, col_type in self.col_mapping.items():
+            raw = row[col_idx] if col_idx < len(row) else ""
+            raw_fields[f"col_{col_idx}"] = raw
+            result = mapper.map(col_type, raw, row_idx)
+            if result["value"] is not None:
+                parsed_entities[col_type] = result
+                if col_type == "brand" and result["value"] in KNOWN_BRANDS:
+                    reasoning.append(f"品牌识别为{result['value']}集团")
+                elif col_type == "model" and AC_REGEX.search(raw):
+                    reasoning.append("型号匹配空调正则")
+                elif col_type == "price":
+                    reasoning.append("价格合理性检验通过")
+
+        return parsed_entities, reasoning
+
+
+# ---------------------------------------------------------------------------
+# Layer 6: Quality Router
+# ---------------------------------------------------------------------------
+def overall_confidence(entities: dict[str, Any]) -> float:
+    if not entities:
+        return 0.0
+    scores = [e["confidence"] for e in entities.values()]
+    return round(sum(scores) / len(scores) * 100, 1)
+
+
+def quality_tier(score: float) -> str:
+    if score >= 85:
+        return "HIGH"
+    elif score >= 65:
+        return "MEDIUM"
+    return "LOW"
+
+
+class QualityRouter:
+    def route(self, raw_fields: dict, parsed_entities: dict, reasoning: list[str], row_idx: int, sheet_name: str = "Sheet1") -> dict:
+        conf = overall_confidence(parsed_entities)
+        return {
+            "source_format": "excel",
+            "source_location": f"{sheet_name}:row_{row_idx + 1}",
+            "raw_fields": raw_fields,
+            "parsed_entities": parsed_entities,
+            "confidence_score": conf,
+            "quality_tier": quality_tier(conf),
+            "reasoning": reasoning,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Orchestrator
+# ---------------------------------------------------------------------------
+def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filename: str) -> dict:
+    """Run pipeline on per-sheet data with independent column mapping per sheet."""
+    detector = FormatDetector()
+    typer = ColumnTyper()
+
+    fmt = detector.detect(ext)
+    router = QualityRouter()
+
+    records = []
+    summary = {"total": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+
+    # Process each sheet independently with its own column mapping
+    for sheet_name, rows in sheet_data:
+        headers = rows[0] if rows else []
+        data_rows = rows[1:] if len(rows) > 1 else []
+
+        # Infer column mapping per-sheet (handles different column orders between sheets)
+        col_mapping = typer.infer(headers, data_rows)
+        extractor = EntityExtractor(col_mapping)
+
+        for idx, row in enumerate(data_rows):
+            parsed_entities, reasoning = extractor.extract(row, idx, sheet_name=sheet_name)
+            raw_fields = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+            record = router.route(raw_fields, parsed_entities, reasoning, idx + 2, sheet_name=sheet_name)
+            records.append(record)
+            tier = record["quality_tier"]
+            summary[tier] += 1
+            summary["total"] += 1
+
+    return {
+        "status": "ok",
+        "filename": filename,
+        "format_detected": fmt,
+        "records": records,
+        "summary": summary,
+        "processed_at": datetime.utcnow().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Database Persistence — write parsed records to MySQL
+# ---------------------------------------------------------------------------
+LOW_QUALITY_THRESHOLD = 65.0  # confidence below this → is_low_quality=1
+
+
+def _get_or_create_supplier(filename: str, conn) -> int | None:
+    """Get or create a supplier record. Returns supplier_id."""
+    # Derive supplier_code from filename (use first 64 chars of filename as code)
+    supplier_code = filename[:64]
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT id FROM suppliers WHERE supplier_code = %s", (supplier_code,))
+    row = cur.fetchone()
+    if row:
+        sid = row["id"]
+        cur.close()
+        return sid
+    # Create new supplier
+    supplier_name = supplier_code.split("/")[-1].split(".")[0][:128]
+    cur.execute(
+        "INSERT INTO suppliers (supplier_code, supplier_name, source_file, freshness, total_records) "
+        "VALUES (%s, %s, %s, 'pending', 0)",
+        (supplier_code, supplier_name, filename),
+    )
+    sid = cur.lastrowid
+    conn.commit()
+    cur.close()
+    return sid
+
+
+def _upsert_supplier_stats(supplier_id: int, records: list[dict], conn):
+    """Update supplier aggregate stats after inserting records."""
+    total = len(records)
+    if total == 0:
+        return
+    brands = set()
+    prices = []
+    quality_scores = []
+    low_count = 0
+    for r in records:
+        if r.get("brand"):
+            brands.add(r["brand"])
+        if r.get("price") is not None:
+            prices.append(r["price"])
+        cs = r.get("confidence_score", 0)
+        quality_scores.append(cs)
+        if r.get("quality_tier") == "LOW":
+            low_count += 1
+
+    avg_price = sum(prices) / len(prices) if prices else 0
+    avg_conf = sum(quality_scores) / len(quality_scores) if quality_scores else 0
+    parse_rate = (total - low_count) / total * 100 if total > 0 else 0
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE suppliers
+        SET total_records = %s,
+            total_brands = %s,
+            avg_price = %s,
+            parse_success_rate = %s,
+            data_quality_score = %s,
+            updated_at = NOW()
+        WHERE id = %s
+    """, (total, len(brands), avg_price, parse_rate, avg_conf, supplier_id))
+    conn.commit()
+    cur.close()
+
+
+def persist_records_to_db(records: list[dict], filename: str, supplier_id: int | None = None) -> dict:
+    """
+    Write parsed records to MySQL supplier_quotes table.
+    Auto-marks LOW quality_tier records as is_low_quality=1.
+    Returns stats dict.
+    """
+    if not records:
+        return {"inserted": 0, "low_quality": 0, "supplier_id": supplier_id}
+
+    conn = get_db_connection()
+    try:
+        if supplier_id is None:
+            supplier_id = _get_or_create_supplier(filename, conn)
+            if supplier_id is None:
+                return {"error": "could not get or create supplier", "inserted": 0}
+
+        inserted = 0
+        low_quality_count = 0
+        cur = conn.cursor()
+
+        for record in records:
+            parsed = record.get("parsed_entities", {})
+            conf = record.get("confidence_score", 0.0)
+            tier = record.get("quality_tier", "MEDIUM")
+            is_low = 1 if tier == "LOW" else 0
+
+            # Extract field values safely
+            brand = parsed.get("brand", {}).get("value") if parsed.get("brand") else None
+            category = parsed.get("category", {}).get("value") if parsed.get("category") else None
+            model_raw = parsed.get("model", {}).get("value") if parsed.get("model") else None
+            model_std = model_raw  # Use raw model as std if no further normalization
+            price = parsed.get("price", {}).get("value") if parsed.get("price") else None
+            price_type = None  # price_type not extracted in current pipeline
+
+            if brand is None and category is None and model_raw is None:
+                # Skip completely empty records
+                continue
+
+            cur.execute("""
+                INSERT INTO supplier_quotes
+                    (supplier_id, brand, category, model_raw, model_std, price, price_type,
+                     quality_tier, confidence, is_low_quality, raw_row)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                supplier_id,
+                brand,
+                category,
+                model_raw,
+                model_std,
+                price,
+                price_type,
+                tier,
+                conf,
+                is_low,
+                json.dumps(record.get("raw_fields", {})),
+            ))
+            inserted += 1
+            if is_low:
+                low_quality_count += 1
+
+        conn.commit()
+        cur.close()
+
+        # Update supplier aggregate stats
+        _upsert_supplier_stats(supplier_id, records, conn)
+
+        return {
+            "inserted": inserted,
+            "low_quality": low_quality_count,
+            "supplier_id": supplier_id,
+        }
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Background Task Processing
+# ---------------------------------------------------------------------------
+async def process_task_async(task_id: str, sheet_data: list[tuple[str, list[list[str]]]], ext: str, filename: str):
+    """Background task: run pipeline, persist to MySQL, and store result in Redis."""
+    r = get_redis()
+    try:
+        result = run_pipeline(sheet_data, ext, filename)
+        result["task_id"] = task_id
+        result["status"] = "completed"
+
+        # Persist records to MySQL with confidence + auto low-quality marking
+        persist_stats = persist_records_to_db(result.get("records", []), filename)
+        result["db_persist"] = persist_stats
+
+        # Store result as JSON string with TTL
+        r.setex(f"{RESULT_PREFIX}{task_id}", RESULT_TTL, json.dumps(result))
+    except Exception as e:
+        error_result = {
+            "task_id": task_id,
+            "status": "failed",
+            "error": str(e),
+            "completed_at": datetime.utcnow().isoformat(),
+        }
+        r.setex(f"{RESULT_PREFIX}{task_id}", RESULT_TTL, json.dumps(error_result))
+
+
+# ---------------------------------------------------------------------------
+# FastAPI Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/pipeline/health")
+def health():
+    return {"status": "ok", "service": "pipeline"}
+
+
+@app.post("/pipeline/parse", response_model=TaskSubmitResponse)
+async def parse(file: UploadFile):
+    """
+    Async intake: writes to Redis Streams and returns task_id immediately.
+    Does NOT wait for parsing to complete.
+    """
+    content = await file.read()
+    sheet_data, ext = IntakeLayer().load(content, file.filename)
+
+    task_id = str(uuid.uuid4())
+    r = get_redis()
+
+    # Write task to Redis Stream
+    task_data = {
+        "task_id": task_id,
+        "filename": file.filename,
+        "ext": ext,
+        "submitted_at": datetime.utcnow().isoformat(),
+        "rows": json.dumps(sheet_data),  # serialize sheet_data as JSON string
+    }
+    r.xadd(STREAM_KEY, task_data)
+
+    # Also store raw sheet_data under result key with PENDING status (for result query before completion)
+    pending_result = {
+        "task_id": task_id,
+        "status": "pending",
+        "filename": file.filename,
+        "submitted_at": datetime.utcnow().isoformat(),
+    }
+    r.setex(f"{RESULT_PREFIX}{task_id}", RESULT_TTL, json.dumps(pending_result))
+
+    # Trigger background processing
+    import asyncio
+    asyncio.create_task(process_task_async(task_id, sheet_data, ext, file.filename))
+
+    return TaskSubmitResponse(
+        task_id=task_id,
+        status="accepted",
+        message="任务已提交，正在后台处理。查询结果请用 GET /pipeline/result/{task_id}",
+    )
+
+
+@app.get("/pipeline/result/{task_id}", response_model=TaskResultResponse)
+def get_result(task_id: str):
+    """
+    Query processing result by task_id.
+    Returns pending/completed/failed status.
+    """
+    r = get_redis()
+    raw = r.get(f"{RESULT_PREFIX}{task_id}")
+    if raw is None:
+        return TaskResultResponse(
+            task_id=task_id,
+            status="not_found",
+            result=None,
+        )
+
+    result = json.loads(raw)
+    return TaskResultResponse(
+        task_id=task_id,
+        status=result.get("status", "unknown"),
+        result=result,
+    )
+
+
+@app.get("/pipeline/stream/info")
+def stream_info():
+    """Return Redis Stream info for debugging."""
+    try:
+        r = get_redis()
+        info = r.xinfo_stream(STREAM_KEY)
+        return {"stream": STREAM_KEY, "exists": True, "info": info}
+    except redis.ResponseError:
+        return {"stream": STREAM_KEY, "exists": False}
