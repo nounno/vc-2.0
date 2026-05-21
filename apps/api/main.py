@@ -1,6 +1,8 @@
 from fastapi import FastAPI
+from export_routes import router as export_router
 
 app = FastAPI()
+app.include_router(export_router, prefix="/api/v1")
 
 
 @app.get("/health")
