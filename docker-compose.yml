@@ -55,7 +55,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:3000 || nc -z localhost:3000"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:3002 || nc -z localhost:3002"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -81,7 +81,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:3000 || nc -z localhost:3000"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:3004 || nc -z localhost:3004"]
       interval: 30s
       timeout: 10s
       retries: 3
