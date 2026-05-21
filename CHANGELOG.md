@@ -1,8 +1,45 @@
 # VC 2.0 开发日志 (Development Log)
 
-## 2026-05-21 — 第三方审计修复 v1
+## 2026-05-21 — 部署验证完成 ✅
 
-### 提交: `6ac4159` — audit-fix: P0 security + admin UI + tests v1
+### 提交: `e3c48d1` — fix: nginx upstream ports + export_routes include + globals.css
+
+### 验收结果（2026-05-21 22:30 CST）
+
+| # | 验收项 | 状态 | 证据 |
+|---|--------|------|------|
+| 1 | 9个容器全部Running+Healthy | ✅ | admin/api/datacenter/pipeline/redis/mysql/nginx/search/supplier/web |
+| 2 | MySQL数据完整 | ✅ | 33974 std_products + 139674 supplier_quotes |
+| 3 | Nginx安全响应头 | ✅ | X-Frame-Options/CSP/X-Content-Type/Permissions-Policy |
+| 4 | Admin UI侧边栏 | ✅ | 7分组导航正常渲染 |
+| 5 | Admin全页面200 | ✅ | brands/categories/columns/products/accounts/logs/pipeline |
+| 6 | API Export Routes | ✅ | /api/v1/export/suppliers + /api/v1/export/std_products → 200 |
+| 7 | MySQL连接 | ✅ | datacenter/search/pipeline均通过MYSQL_PASSWORD连接 |
+
+### 本轮修复的问题
+
+- **nginx upstream端口错误**: admin:3000→3001, supplier:3000→3002, web:3000→3004（此前502）
+- **export_routes未接入main.py**: 添加`app.include_router(export_router, prefix="/api/v1")`
+- **globals.css缺失**: CC创建了基础tailwind文件
+- **.env缺少MYSQL_PASSWORD**: 添加Vc@2026#db（此前所有服务空密码导致Access denied）
+- **docker-compose.yml healthcheck**: supplier:3002, web:3004（此前错误查:3000）
+- **.env MYSQL_PASSWORD URL编码**: Vc@2026%23db→Vc@2026#db（字面量）
+
+### Git提交记录
+
+```
+e3c48d1 fix: nginx upstream ports + export_routes include + globals.css
+97e6c2d fix: include export_routes router in main.py
+208c368 docs: add CHANGELOG.md development log
+6ac4159 audit-fix: P0 security + admin UI + tests v1
+```
+
+### 待验证
+
+- [x] rebuild 后所有服务 MySQL 连接正常
+- [x] admin UI 各页面可正常访问
+- [x] nginx 代理路由 `/api/v1/` 正常
+- [x] healthcheck 全部通过
 
 ### 修复项
 
