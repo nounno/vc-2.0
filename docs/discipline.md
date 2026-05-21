@@ -1,7 +1,7 @@
-# VC 2.0 生产纪律 v1.2
+# VC 2.0 生产纪律 v1.3
 
 **生效日期**: 2026-05-19
-**修订内容**: 新增第六章 经验教训（8条，来自Phase 4实战）
+**修订内容**: v1.3 新增第三章第五节（Git push铁律、备份验证、代码审查）
 
 ---
 
@@ -65,6 +65,27 @@
 - 每个交付项必须引用商业计划书具体章节
 - "功能跑通"不是验收标准，"商业价值实现"才是
 - 验收不通过的功能不视为"已完成"
+
+### 3.4 Git与备份铁律
+
+#### 3.4.1 Git push 强制规则
+每次本地 `git commit` 后，**必须立即 push 到远程仓库**。禁止积累未推送提交。
+```bash
+git commit -m "描述" && git push origin main
+```
+
+#### 3.4.2 备份恢复验证
+每周至少执行一次备份可恢复性验证：
+```bash
+bash /home/ubuntu/vc-2.0/backup.sh
+# 验证 MySQL dump 可读
+gunzip -c /home/ubuntu/backups/最新日期/mysql_all.sql.gz | head -3
+# 验证 Git repo 可解压
+tar tzf /home/ubuntu/backups/最新日期/vc2_repo.tar.gz | head -5
+```
+
+#### 3.4.3 外部修改审查
+来自 GitHub 网页、另一台机器或其他开发者的任何代码修改，**必须先 `git fetch` + `git diff` 审查变更内容**，确认无安全风险和宪法违规后方可 `git merge` 或 `git pull`。
 
 ---
 
