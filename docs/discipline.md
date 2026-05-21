@@ -89,7 +89,44 @@ tar tzf /home/ubuntu/backups/最新日期/vc2_repo.tar.gz | head -5
 
 ---
 
-## 四、禁止事项
+### 3.5 磁盘容量管理
+
+#### 3.5.1 磁盘容量红线
+- 单个磁盘使用率 **≥ 85%** 必须立即清理
+- 触发清理阈值：**80%**
+
+#### 3.5.2 快速排查命令
+```bash
+# 1. 看各分区使用率
+df -h /
+# 2. 看 Docker 各类型空间占用
+docker system df
+# 3. 看 Docker 子目录明细
+du -sh /var/lib/docker/* | sort -rh | head -10
+```
+
+#### 3.5.3 清理操作规程
+```bash
+# 步骤1：清理构建缓存（最大来源）
+docker builder prune -a -f
+
+# 步骤2：清理悬空镜像和未使用镜像
+docker system prune -a -f
+
+# 步骤3：确认结果
+df -h / && docker system df
+```
+
+#### 3.5.4 定期自动清理
+每周一凌晨 3:00 自动执行清理任务（Cron）：
+```bash
+0 3 * * 1 docker builder prune -a -f && docker system prune -a -f >> /home/ubuntu/backups/cleanup.log 2>&1
+```
+日志文件：`/home/ubuntu/backups/cleanup.log`
+
+---
+
+## 五、禁止事项
 1. 在宿主机运行VC 2.0应用进程
 2. 使用PM2管理VC 2.0应用服务
 3. 使用standalone模式部署VC 2.0应用
@@ -101,6 +138,8 @@ tar tzf /home/ubuntu/backups/最新日期/vc2_repo.tar.gz | head -5
 9. 问题报告先下结论后贴堆栈
 10. 跳过设计先行环节直接编码
 11. 在系统级操作中未显式排除九月自身运行环境
+12. **磁盘使用率≥85%时不清理解压上传文件**
+13. **清理前不确认是否有运行中容器依赖将被删除镜像**
 
 ---
 
