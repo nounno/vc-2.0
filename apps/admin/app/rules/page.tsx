@@ -28,7 +28,7 @@ interface RulesSummary {
 }
 
 // ============ API Base ============
-const API_BASE = 'http://localhost:8003/api/v1'
+const API_BASE = '/api/v1'
 
 // ============ Field Config ============
 const fieldColors: Record<string, string> = {

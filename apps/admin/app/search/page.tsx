@@ -67,7 +67,7 @@ export default function SearchPage() {
         params.append('category', searchCategory)
       }
 
-      const response = await fetch(`http://localhost:8001/search?${params.toString()}`)
+      const response = await fetch(`/api/v1/search?${params.toString()}`)
 
       if (!response.ok) {
         throw new Error('Search service unavailable')

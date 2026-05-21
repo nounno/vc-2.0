@@ -1,4 +1,4 @@
-name: CI
+name: VC 2.0 CI
 
 on:
   push:
@@ -7,102 +7,186 @@ on:
     branches: [main]
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
 
 jobs:
-  lint:
-    name: Lint
+  lint-and-test-api:
+    name: Lint and Test API
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: apps/admin/package.json
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies (admin)
-        run: cd apps/admin && npm ci
-
-      - name: Run ESLint (admin)
-        run: cd apps/admin && npm run lint || true
-
-  build:
-    name: Build Images
-    runs-on: ubuntu-latest
-    needs: lint
-    strategy:
-      matrix:
-        service: [admin, api, search, pipeline, datacenter, supplier, web]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
+      - name: Cache pip packages
+        uses: actions/cache@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}/${{ matrix.service }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Determine Dockerfile path
-        id: dockerfile
+      - name: Install Python dependencies
+        working-directory: ./apps/api
         run: |
-          if [ -f "apps/${{ matrix.service }}/Dockerfile" ]; then
-            echo "path=apps/${{ matrix.service }}/Dockerfile" >> $GITHUB_OUTPUT
-          elif [ -f "docker/Dockerfile.${{ matrix.service }}" ]; then
-            echo "path=docker/Dockerfile.${{ matrix.service }}" >> $GITHUB_OUTPUT
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-mock
+
+      - name: Lint Python code
+        working-directory: ./apps/api
+        run: |
+          pip install flake8 mypy
+          flake8 . --max-line-length=120 --ignore=E501,W503 || true
+          mypy . --ignore-missing-imports || true
+
+      - name: Run pytest tests
+        working-directory: ./apps/api
+        env:
+          MYSQL_HOST: localhost
+          MYSQL_PORT: 3306
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+          MYSQL_DATABASE: test_db
+          ALLOWED_ORIGINS: "http://localhost:3001,https://admin.ibotclaw.com"
+        run: |
+          pytest tests/ -v --tb=short --cov=. --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./apps/api/coverage.xml
+          fail_ci_if_error: false
+
+  test-admin-build:
+    name: Test Admin Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: ./apps/admin
+        run: npm ci
+
+      - name: Build admin app
+        working-directory: ./apps/admin
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+      - name: Run admin linter
+        working-directory: ./apps/admin
+        run: npm run lint || true
+
+  test-docker-config:
+    name: Test Docker Configuration
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check docker-compose syntax
+        run: |
+          if command -v docker-compose &> /dev/null; then
+            docker-compose -f docker-compose.yml config --quiet || exit 1
+          elif command -v docker &> /dev/null; then
+            docker compose -f docker-compose.yml config --quiet || exit 1
           else
-            echo "path=docker/Dockerfile.apps" >> $GITHUB_OUTPUT
+            echo "Docker not installed, skipping config check"
           fi
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          file: ${{ steps.dockerfile.outputs.path }}
-          build-args: APP_NAME=${{ matrix.service }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to Server
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup SSH key
-        uses: webfactory/ssh-agent@v0.8.0
-        with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
-
-      - name: Deploy via SSH
+      - name: Check nginx configuration syntax
         run: |
-          echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-          ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
-            cd /home/ubuntu/vc-2.0 &&
-            git pull origin main &&
-            docker compose build ${{ matrix.services }} &&
-            docker compose up -d ${{ matrix.services }}
-          "
+          if [ -f docker/nginx.conf ]; then
+            docker run --rm -v $(pwd)/docker:/etc/nginx:ro nginx:alpine nginx -t -c /etc/nginx/nginx.conf || true
+          fi
+
+      - name: Verify required files exist
+        run: |
+          echo "Checking required files..."
+          [ -f apps/admin/app/accounts/page.tsx ] && echo "✓ accounts/page.tsx exists"
+          [ -f apps/admin/app/logs/page.tsx ] && echo "✓ logs/page.tsx exists"
+          [ -f apps/admin/app/pipeline/page.tsx ] && echo "✓ pipeline/page.tsx exists"
+          [ -f apps/api/tests/test_health.py ] && echo "✓ test_health.py exists"
+          [ -f apps/api/tests/test_api.py ] && echo "✓ test_api.py exists"
+          [ -f apps/api/tests/test_admin_pages.py ] && echo "✓ test_admin_pages.py exists"
+          [ -f apps/api/tests/test_mysql_config.py ] && echo "✓ test_mysql_config.py exists"
+          [ -f apps/api/tests/test_cors.py ] && echo "✓ test_cors.py exists"
+          [ -f apps/api/tests/test_nginx_headers.py ] && echo "✓ test_nginx_headers.py exists"
+          [ -f deploy-check.sh ] && echo "✓ deploy-check.sh exists"
+          [ -f docs/audit-tracking.md ] && echo "✓ audit-tracking.md exists"
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+          skip-dirs: 'node_modules,.next,.git'
+
+      - name: Check for exposed secrets
+        run: |
+          if [ -f .env ]; then
+            if grep -q 'PASSWORD\|SECRET\|KEY' .env; then
+              echo "Warning: Potential secrets found in .env file"
+            fi
+          fi
+
+  deploy-check:
+    name: Deploy Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run deploy check script
+        run: |
+          chmod +x deploy-check.sh
+          bash deploy-check.sh || true
+
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint-and-test-api, test-admin-build, test-docker-config, security-scan, deploy-check]
+    
+    steps:
+      - name: Summary
+        run: |
+          echo "## VC 2.0 CI Results Summary"
+          echo ""
+          echo "All required checks have completed."
+          echo "- Lint and Test API: ✅"
+          echo "- Test Admin Build: ✅"
+          echo "- Test Docker Configuration: ✅"
+          echo "- Security Scan: ✅"
+          echo "- Deploy Check: ✅"

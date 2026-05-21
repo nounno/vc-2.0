@@ -16,14 +16,14 @@ from typing import Optional
 
 app = FastAPI()
 
-# ─── Config (from environment) ────────────────────────────────────────────────
-MYSQL_HOST = os.environ.get("MYSQL_HOST", "mysql")
-MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-MYSQL_USER = os.environ.get("MYSQL_USER", "valuecube")
-MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "Vc@2026#db")
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "valuecube")
-REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
-REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
+# ─── Config (from environment — all mandatory, no defaults per VC Constitution §1.2) ─
+MYSQL_HOST = os.environ["MYSQL_HOST"]
+MYSQL_PORT = int(os.environ["MYSQL_PORT"])
+MYSQL_USER = os.environ["MYSQL_USER"]
+MYSQL_PASSWORD = os.environ["MYSQL_PASSWORD"]
+MYSQL_DATABASE = os.environ["MYSQL_DATABASE"]
+REDIS_HOST = os.environ["REDIS_HOST"]
+REDIS_PORT = int(os.environ["REDIS_PORT"])
 CACHE_TTL = 300  # 5 minutes
 
 # ─── Redis (graceful fallback) ────────────────────────────────────────────────

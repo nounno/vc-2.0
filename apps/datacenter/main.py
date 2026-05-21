@@ -10,15 +10,19 @@ import os
 
 app = FastAPI(title="ValueCube DataCenter", version="2.7")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=os.environ["ALLOWED_ORIGINS"].split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ─── MySQL Config ────────────────────────────────────────────────────────────
-MYSQL_HOST = os.environ.get("MYSQL_HOST", "mysql")
-MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-MYSQL_USER = os.environ.get("MYSQL_USER", "valuecube")
-MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "Vc@2026#db")
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "valuecube")
+MYSQL_HOST = os.environ["MYSQL_HOST"]
+MYSQL_PORT = int(os.environ["MYSQL_PORT"])
+MYSQL_USER = os.environ["MYSQL_USER"]
+MYSQL_PASSWORD = os.environ["MYSQL_PASSWORD"]
+MYSQL_DATABASE = os.environ["MYSQL_DATABASE"]
 
 _db_pool = None
 def get_pool():
@@ -41,6 +45,11 @@ def get_db():
 # ── Health ──────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
+    return {"status": "ok", "service": "datacenter", "version": "2.7", "database": "mysql"}
+
+# ── /datacenter/health backward-compatible alias ───────────────────────────
+@app.get("/datacenter/health")
+def datacenter_health():
     return {"status": "ok", "service": "datacenter", "version": "2.7", "database": "mysql"}
 
 # ── 2.2 供应商质量评分 ─────────────────────────────────────────────────────

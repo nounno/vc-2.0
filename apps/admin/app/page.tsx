@@ -117,25 +117,25 @@ function getPriorityTextColor(priority: 'P0' | 'P1' | 'P2'): string {
 
 // ============ API Functions ============
 async function fetchKpiData(): Promise<KpiData> {
-  const res = await fetch('http://localhost:8004/datacenter/api/v1/stats/overview')
+  const res = await fetch('/api/v1/datacenter/stats/overview')
   if (!res.ok) throw new Error('Failed to fetch KPI data')
   return res.json()
 }
 
 async function fetchQualityData(): Promise<QualityData> {
-  const res = await fetch('http://localhost:8004/datacenter/api/v1/quality/overview')
+  const res = await fetch('/api/v1/datacenter/quality/overview')
   if (!res.ok) throw new Error('Failed to fetch quality data')
   return res.json()
 }
 
 async function fetchPendingQuotes(): Promise<PendingQuote[]> {
-  const res = await fetch('http://localhost:8000/api/v1/quotes?status=pending')
+  const res = await fetch('/api/v1/quotes?status=pending')
   if (!res.ok) throw new Error('Failed to fetch pending quotes')
   return res.json()
 }
 
 async function fetchSuppliers(): Promise<Supplier[]> {
-  const res = await fetch('http://localhost:8000/api/v1/suppliers')
+  const res = await fetch('/api/v1/suppliers')
   if (!res.ok) throw new Error('Failed to fetch suppliers')
   return res.json()
 }

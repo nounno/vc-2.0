@@ -48,7 +48,7 @@ interface AuditDecision {
 }
 
 // ============ API Base ============
-const API_BASE = 'http://localhost:8003/api/v1'
+const API_BASE = '/api/v1'
 
 // ============ Utility Functions ============
 function getConfidenceColor(score: number): string {
