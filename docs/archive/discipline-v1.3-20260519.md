@@ -1,7 +1,7 @@
-# VC 2.0 生产纪律 v1.6
+# VC 2.0 生产纪律 v1.3
 
-**生效日期**: 2026-05-22
-**修订内容**: v1.6 修正MySQL连接参数（容器内网访问）、更新账号密码来源、删除search API BASE误导条目、六层架构正文统一
+**生效日期**: 2026-05-19
+**修订内容**: v1.3 新增第三章第五节（Git push铁律、备份验证、代码审查）
 
 ---
 
@@ -17,8 +17,7 @@
 ### 1.2 环境变量
 - 所有环境变量通过docker-compose注入，禁止依赖.env.local
 - 数据库密码含特殊字符时必须URL编码（# → %23）
-- **数据库主机：容器内网DNS名 `mysql`，端口 `3306`（非127.0.0.1，非3307）**
-- docker-compose 中 mysql 服务**禁止暴露 ports 段**（纯内网访问，不对外网开放）
+- 数据库主机使用127.0.0.1，禁止使用localhost
 
 ### 1.3 基础设施组件（必装）
 
@@ -57,7 +56,7 @@
 
 ### 3.2 设计先行
 以下模块编码前必须先出设计文档，董事长确认后执行：
-- 六层Pipeline各层接口
+- 五层Pipeline各层接口
 - 五大核心视图（每个需定义：谁用、什么场景、解决什么问题）
 - AI采购助手交互设计
 - 数据中心各层数据模型
@@ -127,7 +126,7 @@ df -h / && docker system df
 
 ---
 
-## 四、禁止事项
+## 五、禁止事项
 1. 在宿主机运行VC 2.0应用进程
 2. 使用PM2管理VC 2.0应用服务
 3. 使用standalone模式部署VC 2.0应用
@@ -179,51 +178,11 @@ lark-cli base +record-upsert \
 
 ---
 
-## 六、凭证管理
-
-> **v1.6 新增章节**
-
-### 6.1 唯一真源
-`/home/ubuntu/collab/credentials.md` 是所有服务凭证的**唯一真源**。任何密码变更必须先更新此文件，再改数据库或其他配置。
-
-**禁止将凭证硬编码或写入代码。**
-
-### 6.2 VC 2.0 账号密码
-> 来源：`/home/ubuntu/collab/credentials.md`
-
-| 角色 | 用户名 | 密码 |
-|------|--------|------|
-| 管理员 | admin | gaPu4lanynt7h8eaFsZs |
-| 供应商 | supplier | wZ1MlJyXVYVtURXB |
-
-密码存储方式：**bcrypt** 哈希存储，不可逆。
-
-### 6.3 数据库凭证
-
-| 参数 | 值 |
-|------|-----|
-| MySQL 主机（容器内网） | mysql |
-| MySQL 端口 | 3306 |
-| MySQL 用户 | valuecube |
-| MySQL 密码 | Vc@2026#db |
-| MySQL root 密码 | Vc@2026#root |
-
-> ⚠️ 密码含 `#`，在 docker-compose.yml 中需 URL 编码为 `%23`。
-> ⚠️ MySQL 服务**不暴露 ports 段**，仅限 Docker 内网访问。
-
-### 6.4 密码变更流程
-1. 更新 `credentials.md`
-2. 生成 bcrypt 哈希：`python3 -c "from passlib.hash import bcrypt; print(bcrypt.hash('新密码'))"`
-3. 更新数据库：`UPDATE auth_users SET password_hash='{hash}' WHERE username='{user}'`
-4. 验证：`docker exec vc2_api python3 -c "from passlib.hash import bcrypt; print(bcrypt.verify('新密码', 'hash'))"`
-
----
-
-## 七、经验教训（Phase 4 实战）
+## 六、经验教训（Phase 4 实战）
 
 > 以下每条教训均来自实际踩坑，触发条件明确。执行任务时若遇到匹配场景，自动引用对应条目。
 
-### 7.1 代码变更必须Rebuild镜像
+### 6.1 代码变更必须Rebuild镜像
 
 **问题现象**：修改了 `datacenter/main.py` 列名，重建容器2次，错误依旧。
 
@@ -240,7 +199,7 @@ docker compose up -d {service}
 
 ---
 
-### 7.2 Dockerfile层缓存陷阱
+### 6.2 Dockerfile层缓存陷阱
 
 **问题现象**：`--no-cache` 重建镜像，但容器内仍是旧代码报错依旧。
 
@@ -256,7 +215,7 @@ docker compose build --no-cache {service}
 
 ---
 
-### 7.3 数据库Schema与代码不一致
+### 6.3 数据库Schema与代码不一致
 
 **问题现象**：`rules/sync` 每次返回 500，`Unknown column 'target_value' in 'where clause'`。
 
@@ -271,7 +230,7 @@ docker compose build --no-cache {service}
 
 ---
 
-### 7.4 Next.js params类型与React版本兼容性
+### 6.4 Next.js params类型与React版本兼容性
 
 **问题现象**：`admin/suppliers/1` 返回 500，日志：`Cannot read properties of undefined (reading 'workers')`。
 
@@ -294,7 +253,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
 
 ---
 
-### 7.5 异步任务验证必须轮询
+### 6.5 异步任务验证必须轮询
 
 **问题现象**：上传文件后立即检查数据库，写入结果为空，误判功能失效。
 
@@ -309,7 +268,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
 
 ---
 
-### 7.6 MySQL跨容器连接超时
+### 6.6 MySQL跨容器连接超时
 
 **问题现象**：`docker exec vc2_mysql mysql -u valuecube ...` 执行含 JOIN 或大表查询时频繁超时，但 `SELECT 1` 正常。
 
@@ -318,13 +277,13 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
 **正确做法**：
 - 维护操作前先重启占用连接的容器（如 `docker compose restart datacenter`）
 - 用 `--silent --batch` 减少输出缓冲
-- 复杂查询使用 `docker exec` 在 MySQL 容器内执行（网络最优）
+- 复杂查询换用本地 mysql CLI 客户端（`mysql -h 127.0.0.1 -P 3307`）
 
 **触发条件**：维护脚本或手动数据库操作。
 
 ---
 
-### 7.7 Build时间与后台任务管理
+### 6.7 Build时间与后台任务管理
 
 **问题现象**：前台执行 `docker compose build admin`，超时被系统中断。
 
@@ -341,7 +300,7 @@ wait  # 或用 notify_on_complete + process poll
 
 ---
 
-### 7.8 API端点编码边界条件
+### 6.8 API端点编码边界条件
 
 **问题现象**：curl 测试 `GET /search?q=格力` 返回空结果，误判搜索功能失效。
 
@@ -350,13 +309,13 @@ wait  # 或用 notify_on_complete + process poll
 **正确做法**：
 - 先用最简输入（英文/数字）验证接口可达性
 - 确认可达后再定位数据格式/编码问题
-- 中文查询用 URL 编码：`q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('格力'))")`
+- 中文查询用 URL 编码：`q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('格力')))")`
 
 **触发条件**：任何非 ASCII 字符的 API 测试。
 
 ---
 
-## 八、修订程序
+## 七、修订程序
 1. 修订提案由董事长提出
 2. 修订草案由九月起草，董事长确认
-3. 新版本写入docs/discipline.md，旧版本归档至 docs/archive/
+3. 新版本写入docs/discipline.md，旧版本归档
