@@ -19,6 +19,7 @@ export default function AdminLoginPage() {
       const response = await fetch('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ username, password }),
       })
 
@@ -30,10 +31,10 @@ export default function AdminLoginPage() {
         return
       }
 
-      // Store token in localStorage
+      // Store token in localStorage (for client-side usage if needed)
       localStorage.setItem('vc_session', data.token)
-      // Redirect to dashboard
-      router.push('/')
+      // Force full page reload so middleware sees the HttpOnly cookie
+      window.location.href = '/'
     } catch (err) {
       setError('Network error. Please try again.')
       setLoading(false)
