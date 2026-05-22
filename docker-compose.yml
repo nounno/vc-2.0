@@ -69,7 +69,7 @@ services:
         APP_NAME: web
     container_name: vc2_web
     ports:
-      - "3004:3000"
+      - "3004:3004"
     environment:
       - NEXT_PUBLIC_APP_NAME=web
       - NEXT_PUBLIC_API_URL=/api/v1
