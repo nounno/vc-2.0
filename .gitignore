@@ -42,3 +42,4 @@ yarn-debug.log*
 # Sensitive data
 **/credentials.json
 **/service-account-key.json
+ssl-backup/

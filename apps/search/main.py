@@ -3,6 +3,7 @@ AI Purchase Assistant V1 — Search Service
 Data source: MySQL 8.4 (constitution mandate, Chapter 8)
 Caches in Redis (optional — graceful fallback if unavailable)
 """
+import logging
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 import mysql.connector
@@ -13,6 +14,8 @@ import time
 import json
 import os
 from typing import Optional
+
+logger = logging.getLogger("search")
 
 app = FastAPI()
 
@@ -135,7 +138,7 @@ def search_db(q: str, category: Optional[str], limit: int) -> tuple:
 
         return rows, total
     except mysql.connector.Error as e:
-        print(f"[search] MySQL error: {e}")
+        logger.error(f"[search] MySQL error: {e}")
         return [], 0
     finally:
         if cursor:
@@ -255,7 +258,7 @@ def health():
         conn.close()
         db_ok = True
     except Exception as e:
-        print(f"[search] MySQL health check failed: {e}")
+        logger.info(f"[search] MySQL health check failed: {e}")
 
     return {
         "status": "ok",
@@ -271,9 +274,9 @@ async def startup():
     if r:
         try:
             r.ping()
-            print("[search] Redis connected")
+            logger.info("[search] Redis connected")
         except Exception as e:
-            print(f"[search] Redis unavailable: {e}")
+            logger.warning(f"[search] Redis unavailable: {e}")
     pool = get_pool()
     conn = None
     cursor = None
@@ -282,13 +285,16 @@ async def startup():
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM supplier_quotes LIMIT 1")
         count = cursor.fetchone()[0]
-        print(f"[search] MySQL connected: {count} quotes indexed")
-        cursor.close()
-        conn.close()
+        logger.info(f"[search] MySQL connected: {count} quotes indexed")
     except mysql.connector.Error as e:
-        print(f"[search] MySQL startup check: {e}")
+        logger.error(f"[search] MySQL startup check: {e}")
     except Exception as e:
-        print(f"[search] MySQL startup error: {e}")
+        logger.error(f"[search] MySQL startup error: {e}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 if __name__ == "__main__":

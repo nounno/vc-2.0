@@ -38,7 +38,7 @@ services:
         APP_NAME: supplier
     container_name: vc2_supplier
     ports:
-      - "3002:3000"
+      - "3002:3002"
     environment:
       - NEXT_PUBLIC_APP_NAME=supplier
       - NEXT_PUBLIC_API_URL=/api/v1
@@ -207,8 +207,6 @@ services:
   mysql:
     image: mysql:8.4
     container_name: vc2_mysql
-    ports:
-      - "3307:3306"
     environment:
       - MYSQL_ROOT_PASSWORD=Vc@2026#root
       - MYSQL_DATABASE=valuecube
@@ -221,7 +219,7 @@ services:
       - vc2_internal
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pVc2026root"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pVc@2026#root"]
       interval: 10s
       timeout: 5s
       retries: 5

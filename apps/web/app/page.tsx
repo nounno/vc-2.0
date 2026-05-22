@@ -1,6 +1,8 @@
 'use client';
 
-export default function WebPage() {
+import Link from 'next/link';
+
+export default function HomePage() {
   return (
     <div className="min-h-screen text-vt-fg font-sans"
       style={{
@@ -12,16 +14,17 @@ export default function WebPage() {
         style={{ background: "rgba(7, 11, 18, 0.88)", backdropFilter: "blur(12px)" }}>
         <div className="max-w-container mx-auto w-full px-9 flex items-center gap-6">
           {/* Logo */}
-          <a href="/" className="flex items-center gap-2.5 shrink-0">
+          <Link href="/" className="flex items-center gap-2.5 shrink-0">
             <div className="w-8 h-8 rounded-md flex items-center justify-center text-vt-fg font-bold text-lg"
               style={{ background: "#38bdf8" }}>
               V
             </div>
             <span className="font-bold text-lg tracking-tight text-vt-fg">ValueCube</span>
-          </a>
+          </Link>
 
           {/* Nav Links */}
           <div className="hidden md:flex items-center gap-8 ml-auto">
+            <Link href="/products" className="text-sm text-vt-muted hover:text-vt-fg transition-colors duration-90">产品中心</Link>
             <a href="#features" className="text-sm text-vt-muted hover:text-vt-fg transition-colors duration-90">产品功能</a>
             <a href="#modules" className="text-sm text-vt-muted hover:text-vt-fg transition-colors duration-90">核心模块</a>
             <a href="#contact" className="text-sm text-vt-muted hover:text-vt-fg transition-colors duration-90">联系我们</a>
@@ -57,10 +60,10 @@ export default function WebPage() {
                   家电流通<br />加速器
                 </h1>
                 <p className="text-vt-fg-2 text-base max-w-md leading-relaxed">
-                  50<span style={{ color: "#38bdf8" }}>+</span>品牌实时报价{" "}
-                  <span className="text-vt-muted mx-1">·</span>{" "}
-                  AI智能解析{" "}
-                  <span className="text-vt-muted mx-1">·</span>{" "}
+                  <span style={{ color: "#38bdf8", fontWeight: 700 }}>覆盖 171 个品牌</span>
+                  <span className="text-vt-muted mx-2">·</span>
+                  AI智能解析
+                  <span className="text-vt-muted mx-2">·</span>
                   全渠道供需匹配
                 </p>
                 <p className="text-vt-muted text-sm max-w-sm leading-relaxed">
@@ -78,20 +81,20 @@ export default function WebPage() {
                     预约演示
                     <span>→</span>
                   </a>
-                  <a href="#features"
+                  <Link href="/products"
                     className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-bold rounded-md border transition-all duration-90"
                     style={{ background: "#101826", color: "#f8fafc", borderColor: "#263246" }}
                     onMouseEnter={e => { e.currentTarget.style.borderColor = "#38bdf8"; e.currentTarget.style.color = "#38bdf8"; }}
                     onMouseLeave={e => { e.currentTarget.style.borderColor = "#263246"; e.currentTarget.style.color = "#f8fafc"; }}
                   >
-                    了解更多
-                  </a>
+                    浏览产品
+                  </Link>
                 </div>
 
                 {/* Stats row */}
                 <div className="flex flex-wrap gap-8 pt-6 border-t border-vt-border-soft">
                   {[
-                    { val: "50+", label: "合作品牌" },
+                    { val: "171+", label: "覆盖品牌" },
                     { val: "94%", label: "解析准确率" },
                     { val: "7×24", label: "全天候监控" },
                   ].map(s => (
@@ -125,7 +128,7 @@ export default function WebPage() {
                 {/* Metric Grid */}
                 <div className="grid grid-cols-3 border-b" style={{ borderColor: "#1c2638" }}>
                   {[
-                    { val: "50+", label: "Active brands" },
+                    { val: "171+", label: "Brands covered" },
                     { val: "12,847", label: "SKUs tracked" },
                     { val: "94%", label: "Parse accuracy" },
                   ].map((m, i) => (
@@ -165,8 +168,44 @@ export default function WebPage() {
           </div>
         </section>
 
+        {/* ─── Brand Coverage Stats ─────────────────────────────────────── */}
+        <section className="px-9 py-16 border-t" style={{ borderColor: "#1c2638", background: "#101826" }}>
+          <div className="max-w-container mx-auto">
+            <div className="text-center mb-10">
+              <h2 className="font-bold leading-tight"
+                style={{ fontSize: "clamp(24px,3.5vw,36px)", letterSpacing: "-0.01em" }}>
+                广泛的品牌覆盖
+              </h2>
+              <p className="text-vt-muted text-sm mt-3">数据覆盖家电行业主流品牌，实时追踪市场动态</p>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {[
+                "美的", "海尔", "格力", "海信", "TCL", "长虹",
+                "奥克斯", "松下", "三菱电机", "大金", "卡萨帝", "COLMO",
+                "小天鹅", "博世", "西门子", "三星", "LG", "索尼",
+              ].map(brand => (
+                <Link href={`/products/${brand}`} key={brand}
+                  className="flex items-center justify-center px-4 py-3 rounded-lg border transition-all duration-90 hover:border-vt-accent hover:text-vt-accent"
+                  style={{ background: "#162238", borderColor: "#263246", color: "#f8fafc" }}
+                >
+                  <span className="font-bold text-sm">{brand}</span>
+                </Link>
+              ))}
+            </div>
+            <div className="text-center mt-6">
+              <Link href="/products"
+                className="inline-flex items-center gap-2 text-sm font-bold transition-colors duration-90"
+                style={{ color: "#38bdf8" }}
+              >
+                查看全部 171 个品牌
+                <span>→</span>
+              </Link>
+            </div>
+          </div>
+        </section>
+
         {/* ─── Brand Promise ─────────────────────────────────────── */}
-        <section className="px-9 py-20 border-t" style={{ borderColor: "#1c2638", background: "#101826" }}>
+        <section className="px-9 py-20 border-t" style={{ borderColor: "#1c2638" }}>
           <div className="max-w-container mx-auto">
             <div className="text-center mb-12">
               <h2 className="font-bold leading-tight"
@@ -200,7 +239,7 @@ export default function WebPage() {
         </section>
 
         {/* ─── Core Features ─────────────────────────────────────── */}
-        <section id="features" className="px-9 py-20">
+        <section id="features" className="px-9 py-20 border-t" style={{ borderColor: "#1c2638", background: "#101826" }}>
           <div className="max-w-container mx-auto">
             <div className="text-center mb-12">
               <p className="font-mono text-xs font-bold tracking-widest uppercase mb-3"
@@ -240,7 +279,7 @@ export default function WebPage() {
               ].map(card => (
                 <div key={card.title}
                   className="rounded-xl p-6 border transition-all duration-90 group"
-                  style={{ background: "#101826", borderColor: "#263246" }}
+                  style={{ background: "#162238", borderColor: "#263246" }}
                   onMouseEnter={e => {
                     e.currentTarget.style.borderColor = card.color;
                     e.currentTarget.style.transform = "translateY(-2px)";
@@ -263,8 +302,56 @@ export default function WebPage() {
           </div>
         </section>
 
+        {/* ─── Product Categories ─────────────────────────────────────── */}
+        <section className="px-9 py-20 border-t" style={{ borderColor: "#1c2638" }}>
+          <div className="max-w-container mx-auto">
+            <div className="text-center mb-12">
+              <p className="font-mono text-xs font-bold tracking-widest uppercase mb-3"
+                style={{ color: "#38bdf8" }}>Product Categories</p>
+              <h2 className="font-bold leading-tight"
+                style={{ fontSize: "clamp(28px,4vw,40px)", letterSpacing: "-0.01em" }}>
+                覆盖家电全品类
+              </h2>
+              <p className="text-vt-muted text-sm mt-3 max-w-md mx-auto">
+                从大型家电到厨卫电器，全面覆盖家电行业数据需求
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { name: "空调", en: "Air Conditioners", count: "32 品牌", icon: "❄️" },
+                { name: "冰箱", en: "Refrigerators", count: "28 品牌", icon: "🧊" },
+                { name: "洗衣机", en: "Washers", count: "24 品牌", icon: "👕" },
+                { name: "电视", en: "TVs", count: "31 品牌", icon: "📺" },
+                { name: "厨房电器", en: "Kitchen Appliances", count: "45 品牌", icon: "🍳" },
+                { name: "热水器", en: "Water Heaters", count: "19 品牌", icon: "🚿" },
+                { name: "小家电", en: "Small Appliances", count: "52 品牌", icon: "🔌" },
+                { name: "冷柜", en: "Freezers", count: "15 品牌", icon: "🗄️" },
+              ].map(cat => (
+                <Link href={`/products?category=${encodeURIComponent(cat.name)}`} key={cat.name}
+                  className="rounded-xl p-6 border text-center transition-all duration-90 group"
+                  style={{ background: "#101826", borderColor: "#263246" }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.borderColor = "#38bdf8";
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.borderColor = "#263246";
+                    e.currentTarget.style.transform = "translateY(0)";
+                  }}
+                >
+                  <div className="text-3xl mb-3">{cat.icon}</div>
+                  <h3 className="font-bold text-base mb-1">{cat.name}</h3>
+                  <p className="text-vt-muted text-xs mb-2">{cat.en}</p>
+                  <span className="text-xs font-mono" style={{ color: "#38bdf8" }}>{cat.count}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* ─── Lower Tiles ─────────────────────────────────────── */}
-        <section id="modules" className="px-9 py-20 border-t" style={{ borderColor: "#1c2638" }}>
+        <section id="modules" className="px-9 py-20 border-t" style={{ borderColor: "#1c2638", background: "#101826" }}>
           <div className="max-w-container mx-auto">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
@@ -286,7 +373,7 @@ export default function WebPage() {
               ].map(tile => (
                 <div key={tile.title}
                   className="rounded-lg p-5 border"
-                  style={{ background: "#101826", borderColor: "#263246" }}>
+                  style={{ background: "#162238", borderColor: "#263246" }}>
                   <p className="font-mono text-xs font-bold tracking-widest uppercase mb-2"
                     style={{ color: "#38bdf8" }}>{tile.eyebrow}</p>
                   <h3 className="font-bold text-base mb-2">{tile.title}</h3>
@@ -298,7 +385,7 @@ export default function WebPage() {
         </section>
 
         {/* ─── CTA ─────────────────────────────────────────────── */}
-        <section id="contact" className="px-9 py-20 border-t" style={{ borderColor: "#1c2638", background: "#101826" }}>
+        <section id="contact" className="px-9 py-20 border-t" style={{ borderColor: "#1c2638" }}>
           <div className="max-w-container mx-auto text-center">
             <h2 className="font-bold leading-tight"
               style={{ fontSize: "clamp(28px,4vw,40px)", letterSpacing: "-0.01em" }}>
@@ -339,9 +426,9 @@ export default function WebPage() {
             <span className="font-bold text-sm text-vt-fg">ValueCube</span>
           </div>
           <div className="flex items-center gap-6 text-xs text-vt-muted">
-            <a href="#" className="hover:text-vt-fg transition-colors duration-90">隐私政策</a>
-            <a href="#" className="hover:text-vt-fg transition-colors duration-90">服务条款</a>
-            <a href="mailto:contact@valuecube.com" className="hover:text-vt-fg transition-colors duration-90">联系邮箱</a>
+            <Link href="/products" className="hover:text-vt-fg transition-colors duration-90">产品中心</Link>
+            <a href="#features" className="hover:text-vt-fg transition-colors duration-90">产品功能</a>
+            <a href="#contact" className="hover:text-vt-fg transition-colors duration-90">联系我们</a>
           </div>
           <div className="text-xs text-vt-muted" style={{ opacity: 0.5 }}>
             © 2026 ValueCube. 保留所有权利。

@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import mysql.connector
 from mysql.connector import pooling
 import os
+from typing import Optional, List
+from pydantic import BaseModel
 
 app = FastAPI(title="ValueCube DataCenter", version="2.7")
 app.add_middleware(
@@ -16,6 +18,64 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── B2 Market Intelligence Models ───────────────────────────────────────────
+class PriceBandItem(BaseModel):
+    brand: str
+    price_p25: float
+    price_p75: float
+
+class PriceBandsResponse(BaseModel):
+    category: str
+    price_min: float
+    price_max: float
+    price_avg: float
+    bands: List[PriceBandItem]
+
+class TrendPoint(BaseModel):
+    date: str
+    price_avg: float
+
+class TrendResponse(BaseModel):
+    category: str
+    trend: str  # "up" | "down" | "stable"
+    change_pct: float
+    data_points: List[TrendPoint]
+    note: Optional[str] = None
+
+# ─── B3 Procurement Decision Models ──────────────────────────────────────────
+class ProcureItem(BaseModel):
+    category: str
+    quantity: int
+
+class ProcureRecommendItem(BaseModel):
+    model: str
+    unit_price: float
+    quantity: int
+    subtotal: float
+
+class ProcurementRecommendation(BaseModel):
+    supplier: str
+    brand: str
+    items: List[ProcureRecommendItem]
+    total_cost: float
+    savings: float
+    remaining: float
+
+class ProcureRecommendResponse(BaseModel):
+    category: str
+    budget: float
+    recommendations: List[ProcurementRecommendation]
+
+class CompareRow(BaseModel):
+    supplier: str
+    category: str
+    items: int
+    total: float
+    unit_avg: float
+
+class ProcureCompareResponse(BaseModel):
+    compare_table: List[CompareRow]
 
 # ─── MySQL Config ────────────────────────────────────────────────────────────
 MYSQL_HOST = os.environ["MYSQL_HOST"]
@@ -222,6 +282,20 @@ class CorrectionVerify(BaseModel):
     status: str  # 'verified' or 'reverted'
     notes: str | None = None
 
+# ── Operation Log helper ───────────────────────────────────────────────────────
+def _write_operation_log(conn, level: str, module: str, action: str, message: str,
+                          operator: str = None, target_type: str = None, target_id: str = None,
+                          ip_address: str = None):
+    """Write to operation_logs table for audit trail."""
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO operation_logs (level, module, action, message, operator, target_type, target_id, ip_address, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+    """, (level, module, action, message, operator, target_type, target_id, ip_address))
+    conn.commit()
+    cur.close()
+
+
 # POST /api/v1/corrections — 创建纠正记录
 @app.post("/api/v1/corrections")
 def create_correction(payload: CorrectionCreate):
@@ -243,6 +317,18 @@ def create_correction(payload: CorrectionCreate):
     log_id = cur.lastrowid
     conn.commit()
     cur.close()
+
+    # S3审计日志：同步写operation_logs
+    _write_operation_log(
+        conn,
+        level="INFO",
+        module="datacenter",
+        action="correction_created",
+        message=f"纠正记录创建: {payload.entity_type}/{payload.field_name} -> {payload.corrected_value}",
+        operator=payload.operator,
+        target_type=payload.entity_type,
+        target_id=str(log_id),
+    )
     conn.close()
     return {"id": log_id, "status": "applied", "applied_at": datetime.now().isoformat()}
 
@@ -782,6 +868,310 @@ def update_rule(rule_id: int, payload: RuleUpdate):
     cur.close()
     conn.close()
     return result
+
+
+# ==============================================================================
+# B2: Market Intelligence Endpoints
+# ==============================================================================
+
+def _approx_percentile(cursor, category: str, brand: str, percentile: float) -> float:
+    """Approximate percentile using OFFSET/FETCH technique."""
+    # Get ordered prices for the brand/category
+    cursor.execute("""
+        SELECT price FROM supplier_quotes
+        WHERE category = %s AND quality_tier IN ('HIGH', 'MEDIUM') AND is_low_quality = 0
+          AND brand = %s AND price IS NOT NULL
+        ORDER BY price
+    """, (category, brand))
+    prices = [row['price'] for row in cursor.fetchall()]
+    if not prices:
+        return 0.0
+    n = len(prices)
+    idx = int(n * percentile / 100.0)
+    if idx >= n:
+        idx = n - 1
+    return float(prices[idx])
+
+
+@app.get("/api/v1/market/price-bands")
+def market_price_bands(category: str = Query(None)):
+    """
+    Return price bands for a category (or all categories if not specified).
+    Filters to HIGH quality, non-low-quality quotes only.
+    """
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)
+
+    if category:
+        # Single category query
+        cat_upper = category.upper()
+        cur.execute("""
+            SELECT brand,
+                   MIN(price) as price_min,
+                   MAX(price) as price_max,
+                   AVG(price) as price_avg
+            FROM supplier_quotes
+            WHERE category = %s AND quality_tier IN ('HIGH', 'MEDIUM') AND is_low_quality = 0
+              AND price IS NOT NULL AND brand IS NOT NULL AND brand != ''
+            GROUP BY brand
+            ORDER BY brand
+        """, (cat_upper,))
+        rows = cur.fetchall()
+
+        if not rows:
+            cur.close()
+            conn.close()
+            return {"category": cat_upper, "price_min": 0, "price_max": 0, "price_avg": 0, "bands": []}
+
+        price_min = float(min(r['price_min'] for r in rows))
+        price_max = float(max(r['price_max'] for r in rows))
+        price_avg = float(sum(r['price_avg'] for r in rows) / len(rows))
+
+        bands = []
+        for r in rows:
+            p25 = _approx_percentile(cur, cat_upper, r['brand'], 25)
+            p75 = _approx_percentile(cur, cat_upper, r['brand'], 75)
+            bands.append(PriceBandItem(brand=r['brand'], price_p25=p25, price_p75=p75))
+
+        cur.close()
+        conn.close()
+        return PriceBandsResponse(
+            category=cat_upper,
+            price_min=price_min,
+            price_max=price_max,
+            price_avg=price_avg,
+            bands=bands
+        )
+    else:
+        # All categories
+        cur.execute("""
+            SELECT DISTINCT category FROM supplier_quotes
+            WHERE quality_tier IN ('HIGH', 'MEDIUM') AND is_low_quality = 0
+            ORDER BY category
+        """)
+        categories = [row['category'] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+
+        results = []
+        for cat in categories:
+            result = market_price_bands(cat)
+            results.append(result)
+        return {"categories": results}
+
+
+@app.get("/api/v1/market/trend")
+def market_trend(category: str = Query(...), days: int = Query(30)):
+    """
+    Return price trend for a category. Since all data is from a single import
+    (2026-05-19), the trend is always 'stable'.
+    """
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)
+
+    cat_upper = category.upper()
+
+    # Check distinct import dates
+    cur.execute("""
+        SELECT DATE(created_at) as import_date, AVG(price) as avg_price
+        FROM supplier_quotes
+        WHERE category = %s AND quality_tier = 'HIGH' AND is_low_quality = 0
+          AND price IS NOT NULL
+        GROUP BY DATE(created_at)
+        ORDER BY import_date
+    """, (cat_upper,))
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    data_points = [TrendPoint(date=str(r['import_date']), price_avg=float(r['avg_price'])) for r in rows]
+
+    if len(data_points) <= 1:
+        return TrendResponse(
+            category=cat_upper,
+            trend="stable",
+            change_pct=0.0,
+            data_points=data_points,
+            note="Insufficient time-series data (all data from single import 2026-05-19)"
+        )
+
+    # Calculate change percentage
+    first_price = data_points[0].price_avg
+    last_price = data_points[-1].price_avg
+    if first_price > 0:
+        change_pct = round((last_price - first_price) / first_price * 100, 2)
+    else:
+        change_pct = 0.0
+
+    if change_pct > 1:
+        trend = "up"
+    elif change_pct < -1:
+        trend = "down"
+    else:
+        trend = "stable"
+
+    return TrendResponse(
+        category=cat_upper,
+        trend=trend,
+        change_pct=change_pct,
+        data_points=data_points,
+        note=None
+    )
+
+
+# ==============================================================================
+# B3: Procurement Decision Endpoints
+# ==============================================================================
+
+@app.get("/api/v1/procure/recommend")
+def procure_recommend(category: str = Query(...), budget: float = Query(...)):
+    """
+    Recommend procurement options for a category within budget.
+    Finds HIGH quality quotes, groups by supplier+brand, calculates quantities.
+    """
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)
+
+    cat_upper = category.upper()
+
+    # Get all HIGH quality quotes for this category within budget
+    cur.execute("""
+        SELECT sq.supplier_id, s.supplier_name, sq.brand, sq.model_std,
+               sq.price, sq.quality_tier
+        FROM supplier_quotes sq
+        JOIN suppliers s ON sq.supplier_id = s.id
+        WHERE sq.category = %s AND sq.quality_tier IN ('HIGH', 'MEDIUM') AND sq.is_low_quality = 0
+          AND sq.price IS NOT NULL AND sq.price <= %s
+          AND sq.brand IS NOT NULL AND sq.brand != ''
+        ORDER BY s.supplier_name, sq.brand, sq.price ASC
+    """, (cat_upper, budget))
+
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not rows:
+        return ProcureRecommendResponse(
+            category=cat_upper,
+            budget=budget,
+            recommendations=[]
+        )
+
+    # Group by supplier + brand
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for r in rows:
+        key = (r['supplier_name'], r['brand'])
+        groups[key].append(r)
+
+    recommendations = []
+    for (supplier, brand), items in groups.items():
+        # Pick the cheapest model for each group
+        cheapest = min(items, key=lambda x: x['price'])
+        unit_price = float(cheapest['price'])
+        quantity = int(budget // unit_price)
+        if quantity < 1:
+            continue
+        subtotal = round(unit_price * quantity, 2)
+        total_cost = subtotal
+        savings = round(budget - total_cost, 2)
+        remaining = savings  # after spending on this option
+
+        rec_items = [ProcureRecommendItem(
+            model=cheapest['model_std'] or cheapest.get('model_raw', 'N/A'),
+            unit_price=unit_price,
+            quantity=quantity,
+            subtotal=subtotal
+        )]
+
+        recommendations.append(ProcurementRecommendation(
+            supplier=supplier,
+            brand=brand,
+            items=rec_items,
+            total_cost=total_cost,
+            savings=savings,
+            remaining=remaining
+        ))
+
+    # Sort by savings descending
+    recommendations.sort(key=lambda x: x.savings, reverse=True)
+
+    return ProcureRecommendResponse(
+        category=cat_upper,
+        budget=budget,
+        recommendations=recommendations
+    )
+
+
+@app.get("/api/v1/procure/compare")
+def procure_compare(items: str = Query(...)):
+    """
+    Compare procurement costs across suppliers for given items.
+    items is a JSON array like: [{"category":"AIR_CONDITIONER","quantity":10},...]
+    """
+    import json
+
+    try:
+        item_list = json.loads(items)
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON for items parameter"}, 400
+
+    if not isinstance(item_list, list):
+        return {"error": "items must be a JSON array"}, 400
+
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)
+
+    compare_table = []
+
+    for req in item_list:
+        cat = req.get('category', '').upper()
+        qty = int(req.get('quantity', 0))
+
+        if not cat or qty <= 0:
+            continue
+
+        # For each supplier, find the best (lowest) total cost for this category
+        cur.execute("""
+            SELECT s.supplier_name, sq.brand,
+                   MIN(sq.price) as best_unit_price
+            FROM supplier_quotes sq
+            JOIN suppliers s ON sq.supplier_id = s.id
+            WHERE sq.category = %s AND sq.quality_tier IN ('HIGH', 'MEDIUM') AND sq.is_low_quality = 0
+              AND sq.price IS NOT NULL
+            GROUP BY s.supplier_name, sq.brand
+            ORDER BY s.supplier_name, best_unit_price ASC
+        """, (cat,))
+        rows = cur.fetchall()
+
+        if not rows:
+            continue
+
+        # Get cheapest option per supplier
+        from collections import defaultdict
+        by_supplier = defaultdict(list)
+        for r in rows:
+            by_supplier[r['supplier_name']].append(float(r['best_unit_price']))
+
+        for supplier, prices in by_supplier.items():
+            best_unit = min(prices)
+            total = round(best_unit * qty, 2)
+            compare_table.append(CompareRow(
+                supplier=supplier,
+                category=cat,
+                items=qty,
+                total=total,
+                unit_avg=round(total / qty, 2)
+            ))
+
+    cur.close()
+    conn.close()
+
+    # Sort by total ascending
+    compare_table.sort(key=lambda x: x.total)
+
+    return ProcureCompareResponse(compare_table=compare_table)
 
 
 if __name__ == "__main__":

@@ -81,7 +81,9 @@ def redis_health() -> bool:
     try:
         get_redis().ping()
         return True
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("pipeline").warning(f"[pipeline] redis_health failed: {e}")
         return False
 
 
@@ -112,11 +114,45 @@ class IntakeLayer:
     """
 
     def load(self, file_content: bytes, filename: str) -> tuple[list[tuple[str, list[list[str]]]], str]:
-        """Read xlsx/xls file. Handles merged cells, forward-fill, multi-sheet.
+        """Read xlsx/xls/csv file. Handles merged cells, forward-fill, multi-sheet.
         Returns list of (sheet_name, rows) tuples - one per data sheet (skip导航/目录 sheet).
         Each rows list has headers at index 0.
         """
         ext = filename.lower().split(".")[-1]
+
+        # Handle CSV format
+        if ext == "csv":
+            import csv
+            import io as csv_io
+            sheet_data = []
+            text_content = file_content.decode("utf-8-sig", errors="replace")
+            reader = csv.reader(csv_io.StringIO(text_content))
+            rows = []
+            for row in reader:
+                # Strip whitespace from each cell
+                cleaned_row = [cell.strip() if cell else "" for cell in row]
+                rows.append(cleaned_row)
+            if rows:
+                sheet_data.append(("Sheet1", rows))
+            return sheet_data, ext
+
+        # Handle ZIP format - extract and read first xlsx/xls/csv file
+        if ext == "zip":
+            import zipfile
+            sheet_data = []
+            try:
+                with zipfile.ZipFile(BytesIO(file_content), 'r') as zf:
+                    for name in zf.namelist():
+                        if name.lower().endswith((".xlsx", ".xls", ".csv")):
+                            inner_content = zf.read(name)
+                            inner_ext = name.lower().split(".")[-1]
+                            # Recursively process the extracted file
+                            inner_filename = name.split("/")[-1]
+                            return self.load(inner_content, inner_filename)
+            except zipfile.BadZipFile:
+                pass
+            return sheet_data, ext
+
         wb = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
 
         SKIP_SHEET_KEYWORDS = ["目录", "导航", "index", "cover", "首页"]
@@ -201,9 +237,13 @@ class IntakeLayer:
 class FormatDetector:
     """Detects the file format."""
 
-    def detect(self, ext: str) -> str:
+    def detect(self, ext: str, content: bytes = None) -> str:
         if ext in ("xlsx", "xls"):
             return "excel"
+        elif ext == "csv":
+            return "csv"
+        elif ext == "zip":
+            return "zip"
         return "unknown"
 
 
@@ -235,6 +275,18 @@ class ColumnTyper:
             # 库存/数量
             elif re.search(r"库存|stock|数量|存货|销量", h_lower):
                 mapping[i] = "stock"
+            # 成本价/供货价/进货价
+            elif re.search(r"供货价|成本价|进货价|采购价|工厂价", h_lower):
+                mapping[i] = "costPrice"
+            # 建议零售价/标价/市场价
+            elif re.search(r"建议零售价|标价|市场价|零售价|指导价|挂牌价", h_lower):
+                mapping[i] = "suggestedPrice"
+            # 数量/件数
+            elif re.search(r"数量|件数|库存量|备货量|可售数量", h_lower):
+                mapping[i] = "quantity"
+            # 仓库/库房/发货地
+            elif re.search(r"仓库|库房|发货地|仓库地址|所在仓库", h_lower):
+                mapping[i] = "warehouse"
             else:
                 # Try to infer from values
                 sample_vals = [row[i] if i < len(row) else "" for row in rows[:5]]
@@ -754,7 +806,13 @@ def clean_int(v: str) -> int | None:
 
 
 class SemanticMapper:
-    def map(self, col_type: str, raw_value: str, row_idx: int) -> dict[str, Any]:
+    # Column name patterns for extended IR fields
+    COST_PRICE_RE = re.compile(r"供货价|成本价|进货价|采购价|工厂价")
+    SUGGESTED_PRICE_RE = re.compile(r"建议零售价|标价|市场价|零售价|指导价|挂牌价")
+    QUANTITY_RE = re.compile(r"数量|件数|库存量|库存数量|备货量|可售数量")
+    WAREHOUSE_RE = re.compile(r"仓库|库房|发货地|仓库地址|所在仓库")
+
+    def map(self, col_type: str, raw_value: str, row_idx: int, header_name: str = "") -> dict[str, Any]:
         if not raw_value or raw_value.strip() == "":
             return {"value": None, "confidence": 0.0}
 
@@ -788,6 +846,36 @@ class SemanticMapper:
             conf = 0.90 if 0 <= stock <= 99999 else 0.50
             return {"value": stock, "confidence": conf}
 
+        elif col_type == "costPrice":
+            price = clean_price(raw_value)
+            if price is None:
+                return {"value": None, "confidence": 0.0}
+            # costPrice is typically lower than retail; accept a wider range
+            in_range = 1 <= price <= 100000
+            conf = 0.88 if in_range else 0.50
+            return {"value": price, "confidence": conf}
+
+        elif col_type == "suggestedPrice":
+            price = clean_price(raw_value)
+            if price is None:
+                return {"value": None, "confidence": 0.0}
+            in_range = PRICE_RANGE[0] <= price <= PRICE_RANGE[1]
+            conf = 0.88 if in_range else 0.50
+            return {"value": price, "confidence": conf}
+
+        elif col_type == "quantity":
+            qty = clean_int(raw_value)
+            if qty is None:
+                return {"value": None, "confidence": 0.0}
+            conf = 0.88 if 0 <= qty <= 999999 else 0.50
+            return {"value": qty, "confidence": conf}
+
+        elif col_type == "warehouse":
+            warehouse = raw_value.strip()
+            if warehouse:
+                return {"value": warehouse, "confidence": 0.85}
+            return {"value": None, "confidence": 0.0}
+
         else:
             return {"value": raw_value.strip(), "confidence": 0.60}
 
@@ -795,11 +883,48 @@ class SemanticMapper:
 # ---------------------------------------------------------------------------
 # Layer 5: Entity Extractor
 # ---------------------------------------------------------------------------
+# Price unit conversion patterns
+PRICE_UNIT_PATTERNS = [
+    (re.compile(r"(\d+(?:\.\d+)?)\s*万元"), 10000),   # 万元 → 元
+    (re.compile(r"(\d+(?:\.\d+)?)\s*百元"), 100),      # 百元 → 元
+    (re.compile(r"(\d+(?:\.\d+)?)\s*千元"), 1000),     # 千元 → 元
+    (re.compile(r"(\d+(?:\.\d+)?)\s*万"), 10000),      # 万 → 元 (without "元")
+    (re.compile(r"(\d+(?:\.\d+)?)\s*千"), 1000),       # 千 → 元
+]
+
+
+def _convert_price_unit(raw_value: str) -> str:
+    """Convert price from 万元/百元/千元 to 元. Returns original if no unit found."""
+    for pattern, multiplier in PRICE_UNIT_PATTERNS:
+        m = pattern.search(raw_value)
+        if m:
+            try:
+                num = float(m.group(1))
+                converted = num * multiplier
+                # Replace the original number+unit with converted value
+                return raw_value.replace(m.group(0), str(int(converted)))
+            except (ValueError, IndexError):
+                continue
+    return raw_value
+
+
+def _lookup_brand_alias(brand: str, conn) -> str:
+    """Look up brand alias in DB to normalize to std_brand."""
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT std_brand FROM brand_aliases WHERE alias = %s", (brand,))
+        row = cur.fetchone()
+        cur.close()
+        return row['std_brand'] if row else brand
+    except Exception:
+        return brand
+
+
 class EntityExtractor:
     def __init__(self, col_mapping: dict[int, str]):
         self.col_mapping = col_mapping
 
-    def extract(self, row: list[str], row_idx: int, sheet_name: str = "Sheet1") -> tuple[dict[str, Any], list[str]]:
+    def extract(self, row: list[str], row_idx: int, sheet_name: str = "Sheet1", conn=None) -> tuple[dict[str, Any], list[str]]:
         mapper = SemanticMapper()
         raw_fields = {}
         parsed_entities = {}
@@ -808,7 +933,13 @@ class EntityExtractor:
         for col_idx, col_type in self.col_mapping.items():
             raw = row[col_idx] if col_idx < len(row) else ""
             raw_fields[f"col_{col_idx}"] = raw
-            result = mapper.map(col_type, raw, row_idx)
+
+            # Apply price unit conversion for price-related fields
+            processed_raw = raw
+            if col_type in ("price", "costPrice", "suggestedPrice"):
+                processed_raw = _convert_price_unit(raw)
+
+            result = mapper.map(col_type, processed_raw, row_idx)
             if result["value"] is not None:
                 parsed_entities[col_type] = result
                 if col_type == "brand" and result["value"] in KNOWN_BRANDS:
@@ -818,23 +949,62 @@ class EntityExtractor:
                 elif col_type == "price":
                     reasoning.append("价格合理性检验通过")
 
+        # Normalize brand via brand_aliases DB lookup if connection provided
+        if "brand" in parsed_entities and conn is not None:
+            original_brand = parsed_entities["brand"]["value"]
+            std_brand = _lookup_brand_alias(original_brand, conn)
+            if std_brand != original_brand:
+                parsed_entities["brand"]["value"] = std_brand
+                reasoning.append(f"品牌别名'{original_brand}'→标准品牌'{std_brand}'")
+
         return parsed_entities, reasoning
 
 
 # ---------------------------------------------------------------------------
 # Layer 6: Quality Router
 # ---------------------------------------------------------------------------
+# Field weights for confidence calculation
+# brand and model weighted 2x (critical identification fields)
+# price weighted 1.5x (commercial field)
+# others weighted 1x
+FIELD_WEIGHTS = {
+    "brand": 2.0,
+    "model": 2.0,
+    "price": 1.5,
+    "costPrice": 1.5,
+    "suggestedPrice": 1.5,
+    "category": 1.0,
+    "stock": 1.0,
+    "quantity": 1.0,
+    "warehouse": 1.0,
+    "text": 1.0,
+}
+
+
 def overall_confidence(entities: dict[str, Any]) -> float:
+    """Calculate weighted average confidence score.
+    Scores in 0-1 range are multiplied by 100 to get 0-100 scale.
+    """
     if not entities:
         return 0.0
-    scores = [e["confidence"] for e in entities.values()]
-    return round(sum(scores) / len(scores) * 100, 1)
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for field, data in entities.items():
+        weight = FIELD_WEIGHTS.get(field, 1.0)
+        # Convert 0-1 confidence to 0-100 scale
+        score_100 = data["confidence"] * 100
+        weighted_sum += score_100 * weight
+        total_weight += weight
+    if total_weight == 0:
+        return 0.0
+    return round(weighted_sum / total_weight, 1)
 
 
 def quality_tier(score: float) -> str:
-    if score >= 85:
+    """Determine quality tier based on confidence score (0-100 scale)."""
+    if score >= 90:
         return "HIGH"
-    elif score >= 65:
+    elif score >= 60:
         return "MEDIUM"
     return "LOW"
 
@@ -856,7 +1026,7 @@ class QualityRouter:
 # ---------------------------------------------------------------------------
 # Pipeline Orchestrator
 # ---------------------------------------------------------------------------
-def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filename: str) -> dict:
+def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filename: str, conn=None) -> dict:
     """Run pipeline on per-sheet data with independent column mapping per sheet."""
     detector = FormatDetector()
     typer = ColumnTyper()
@@ -877,7 +1047,7 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
         extractor = EntityExtractor(col_mapping)
 
         for idx, row in enumerate(data_rows):
-            parsed_entities, reasoning = extractor.extract(row, idx, sheet_name=sheet_name)
+            parsed_entities, reasoning = extractor.extract(row, idx, sheet_name=sheet_name, conn=conn)
             raw_fields = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
             record = router.route(raw_fields, parsed_entities, reasoning, idx + 2, sheet_name=sheet_name)
             records.append(record)
@@ -1043,8 +1213,10 @@ def persist_records_to_db(records: list[dict], filename: str, supplier_id: int |
 async def process_task_async(task_id: str, sheet_data: list[tuple[str, list[list[str]]]], ext: str, filename: str):
     """Background task: run pipeline, persist to MySQL, and store result in Redis."""
     r = get_redis()
+    conn = None
     try:
-        result = run_pipeline(sheet_data, ext, filename)
+        conn = get_db_connection()
+        result = run_pipeline(sheet_data, ext, filename, conn=conn)
         result["task_id"] = task_id
         result["status"] = "completed"
 
@@ -1062,6 +1234,9 @@ async def process_task_async(task_id: str, sheet_data: list[tuple[str, list[list
             "completed_at": datetime.utcnow().isoformat(),
         }
         r.setex(f"{RESULT_PREFIX}{task_id}", RESULT_TTL, json.dumps(error_result))
+    finally:
+        if conn:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------

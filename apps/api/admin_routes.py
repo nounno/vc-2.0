@@ -26,6 +26,7 @@ def get_db():
         database="valuecube",
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=True,
+        charset='utf8mb4',
     )
 
 
