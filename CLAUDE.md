@@ -1,6 +1,6 @@
 # VC 2.0 项目规范
 
-> 维护者: Hermes（九月）| 最后更新: 2026-05-24
+> 维护者：Hermes（九月）| 最后更新：2026-05-24 | 源自：constitution.md v1.1 + discipline.md v1.6
 
 ## 项目概述
 - **项目名称**：ValueCube 2.0（VC2.0）

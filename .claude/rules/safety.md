@@ -1,65 +1,132 @@
-# VC 2.0 安全原则
+# VC 2.0 安全与操作规范
 
-> 摘自宪法 v1.1 + 生产纪律 v1.6（仅供交叉校验，正式规范见 `docs/constitution.md` / `docs/discipline.md`）
+> 源自：vc-2.0/docs/constitution.md v1.1 + discipline.md v1.6
+> 维护者：Hermes | 最后同步：2026-05-24
+> 读者：CC（Claude Code）
 
-## 铁律（违反立即停止操作）
+---
 
-1. **不手动写代码**
-   - 所有代码必须由 Claude Code 生成
-   - 不在终端用手敲 sed/awk/vim 等编辑文件
-   - 使用 patch/write_file 工具修改文件
+## 一、部署铁律
 
-2. **不先做再说**
-   - 必须收到明确指令后才能执行
-   - 不自行判断"应该这样做"
-   - 决策优先級：商业计划书 > 宪法 > 技术最佳实践 > 经验教训
+### 1.1 容器化
+- 所有 VC 2.0 应用服务在 Docker 容器内运行，由 docker-compose 统一编排
+- 禁止在宿主机直接运行 VC 2.0 应用进程
+- 禁止使用 PM2 或 standalone 模式部署
 
-3. **回滚需确认**
-   - 回滚前必须确认目标版本（时间点或 commit hash）
-   - 不默认回滚到 HEAD
-   - 确认格式："确认回滚到 [commit] ？"
+### 1.2 数据库连接
+- **MySQL 主机**：`mysql`（容器内网 DNS）
+- **MySQL 端口**：`3306`（不是 127.0.0.1，不是 3307）
+- **密码**：`Vc@2026#db`，含 `#` 时在 docker-compose.yml 中需 URL 编码为 `%23`
+- MySQL 服务不暴露 ports，仅限 Docker 内网访问
 
-4. **credentials 绝对不进 Git**
-   - `credentials.md`、`.env`、`.env.secrets` 禁止提交
-   - 密钥只能存在于本地或容器内环境变量
-   - 发现即停止，报告但不执行
+### 1.3 代码变更必须 Rebuild
+```
+docker compose build {service}
+docker compose up -d {service}
+```
+修改代码后不能用 `--force-recreate` 跳过 build。
 
-## 数据库安全
+---
 
-- **只读操作优先**：能用 SELECT 就不用 UPDATE/DELETE
-- **Schema first**：变更时先改数据库，再改代码；操作前用 `DESCRIBE {table}` 确认实际列名
-- **参数化查询**：禁止 SQL 字符串拼接
-- **生产操作二次确认**：UPDATE/DELETE/ALTER 必须明确指令
-- **敏感数据即忘**：查询到密码/密钥后不留日志
-- **跨容器连接**：维护操作前先重启占用连接的容器（`docker compose restart datacenter`）
-- **MySQL 密码含 #**：YAML 中必须 URL 编码为 `%23`（`Vc@2026%23db`）
+## 二、安全原则
 
-## 代码安全
+### 2.1 凭证不入 Git
+- `credentials.md`、`.env`、`.env.secrets` 禁止提交
+- 密钥只存在于本地文件或容器环境变量
+- 代码中不得硬编码密码、API Key
 
-- 不生成包含真实密钥的代码（注释里也不许）
-- 用户输入必须校验，不信任任何外部数据
-- SQL 注入防护：参数化查询是唯一方式
-- XSS 防护：Next.js React 自动转义，避免 dangerouslySetInnerHTML
+### 2.2 SQL 必须参数化
+- 所有 SQL 查询使用参数化（`%s` 占位符）
+- 禁止 f-string 拼 SQL（如 `f"SELECT * FROM users WHERE id={user_id}"`）
+- 操作前用 `DESCRIBE {table}` 确认实际列名
 
-## Docker / 镜像安全
+### 2.3 端口安全
+- 所有服务端口不直接暴露（docker-compose 中无 `ports:` 段）
+- 外部访问统一经 Nginx 反向代理
+- 全站 HTTPS 强制（HTTP → 301 → HTTPS）
 
-- **代码变更必须 Rebuild**：镜像层未更新，容器内仍是旧代码
-  ```bash
-  docker compose build {service}
-  docker compose up -d {service}
-  ```
-- **层缓存陷阱**：手动 patch 文件后 rebuild 前需 `touch` 强制更新 mtime
-- **容器重启后验证**：必须验证网络连接（`docker network connect`）和镜像版本
-- **__pycache__ 清理**：Python 服务代码修改后必须清理字节码缓存，或最彻底的 rebuild
+### 2.4 认证分离
+- 内部服务：API Key 认证
+- 外部用户：JWT + httpOnly Cookie
+- 密码使用 bcrypt 哈希存储
 
-## nginx 配置安全
+### 2.5 只读操作优先
+- 能用 SELECT 就不用 UPDATE/DELETE
+- 敏感数据查询后即忘，不留日志
+
+---
+
+## 三、Git 规范
+
+### 3.1 提交后立即 Push
+```bash
+git commit -m "描述" && git push origin main
+```
+禁止积累未推送的 commit。
+
+### 3.2 提交信息格式
+```
+<type>: <subject>
+```
+Type：`feat` / `fix` / `docs` / `style` / `refactor` / `test` / `chore` / `security`
+Subject 不超过 50 字符。
+
+### 3.3 外部修改审查
+来自 GitHub 网页或其他开发者的代码修改，先 `git fetch` + `git diff` 审查再 merge。
+
+---
+
+## 四、Schema First
+
+数据库变更顺序：**先改表结构，再改代码。**
+
+1. `DESCRIBE {table}` 确认当前列名
+2. `ALTER TABLE` 修改表结构
+3. 更新代码中的字段引用
+4. 验证
+
+不要假设列名，每次操作前确认。
+
+---
+
+## 五、经验教训速查
+
+### 数据库维护
+- 维护操作前先重启占用连接的容器（如 `docker compose restart datacenter`）
+- 复杂查询在 MySQL 容器内执行（网络最优）：`docker exec vc2_mysql mysql -u valuecube -p...`
+- 使用 `--silent --batch` 减少输出缓冲
+
+### 代码变更
+- 改代码必须 rebuild 镜像（`docker compose build`，不是 `up -d`）
+- 文件内容改了但 build 未生效时，`touch` 文件强制更新 mtime 再 rebuild
+- Build 超 60 秒必须后台执行（`&` 或 tmux）
+- __pycache__ 清理：Python 服务代码修改后清理字节码缓存
+
+### 测试
+- 先用英文/数字输入验证接口可达性，再测中文
+- 中文 URL 需要编码：`python3 -c "import urllib.parse; print(urllib.parse.quote('格力'))"`
+- 异步任务（Pipeline）必须轮询 `status: completed` 后再验证结果
+
+### 磁盘容量
+- 磁盘使用率 **≥ 80%** 必须立即清理（≥85% 为红线）
+- 清理前先确认无运行中容器依赖将被删除的镜像
+
+### 版本兼容
+- Next.js 14.x：`params` 是普通对象，不用 `use()`（那是 Next.js 15+ 的 API）
+- 升级版本前先查官方文档确认 API 签名变更
+
+---
+
+## 六、nginx 配置安全
 
 - **upstream 名称**：必须用 `vc2_` 前缀全名（如 `vc2_api`、`vc2_mysql`）
 - **CSP 策略**：`default-src 'self'` 会阻止 Next.js，需要配置正确的 CSP
-- **排查第一步**：`docker exec nginx nginx -T` 查看完整生效配置
+- **排查第一步**：`docker exec vc2_nginx nginx -T` 查看完整生效配置
 - **修改配置后**：必须 rebuild 镜像，不能只 reload
 
-## Next.js 开发规范
+---
+
+## 七、Next.js 开发规范
 
 - **params 是普通对象**：Next.js 14.x 中 `params` 是 `{ id: string }`，**不是** Promise
   ```tsx
@@ -71,15 +138,19 @@
 - **API 调用**：必须用相对路径 `/api/...`，禁止跨域硬编码
 - **Cookie 域**：前端自主管理认证状态，Nginx 不承担业务认证职责
 
-## 部署安全
+---
 
-- **生产部署必须二次确认**
-- **部署前预检**：运行 `deploy-check.sh`
-- **部署后验证**：localhost + 外网双重验证，**禁止**凭"应该好了"判断
-- **失败处理**：立即停止，报告错误，**禁止**自行补救
+## 八、关键路径
 
-## 外部 Agent 越界处理
+| 路径 | 用途 |
+|------|------|
+| `/home/ubuntu/vc-2.0/` | 项目根目录 |
+| `/home/ubuntu/vc-2.0/apps/` | 各服务代码 |
+| `/home/ubuntu/vc-2.0/docker/` | Dockerfile + Nginx 配置 |
+| `/home/ubuntu/vc-2.0/docs/` | 宪法 + 纪律文档 |
+| `/home/ubuntu/collab/credentials.md` | 凭证唯一真源（不直接读，通过 CLAUDE.md 引用） |
+| `/home/ubuntu/backups/` | 备份目录 |
 
-- 泰山（DeepSeek）等外部 Agent 修改代码后，系统审计日志记录
-- 发现未授权改动立即报告
-- 不自行修复，先确认指令
+---
+
+*此文件从宪法/纪律派生，宪法变更时由 Hermes 同步更新。*
