@@ -6,9 +6,6 @@ services:
       args:
         APP_NAME: admin
     container_name: vc2_admin
-    ports:
-      - "3001:3001"
-    environment:
       - NEXT_PUBLIC_APP_NAME=admin
       - NEXT_PUBLIC_API_URL=/api/v1
       - NEXT_PUBLIC_SEARCH_URL=/search
@@ -37,9 +34,6 @@ services:
       args:
         APP_NAME: supplier
     container_name: vc2_supplier
-    ports:
-      - "3002:3002"
-    environment:
       - NEXT_PUBLIC_APP_NAME=supplier
       - NEXT_PUBLIC_API_URL=/api/v1
       - NEXT_PUBLIC_SEARCH_URL=/search
@@ -68,9 +62,6 @@ services:
       args:
         APP_NAME: web
     container_name: vc2_web
-    ports:
-      - "3004:3004"
-    environment:
       - NEXT_PUBLIC_APP_NAME=web
       - NEXT_PUBLIC_API_URL=/api/v1
       - NEXT_PUBLIC_SEARCH_URL=/search
@@ -92,9 +83,6 @@ services:
       context: ./apps/search
       dockerfile: ../../docker/Dockerfile.search
     container_name: vc2_search
-    ports:
-      - "8001:8001"
-    environment:
       - SERVICE_NAME=search
       - MYSQL_HOST=${MYSQL_HOST}
       - MYSQL_PORT=${MYSQL_PORT}
@@ -123,9 +111,6 @@ services:
       context: ./apps/api
       dockerfile: ../../docker/Dockerfile.api
     container_name: vc2_api
-    ports:
-      - "8000:8000"
-    environment:
       - SERVICE_NAME=api
       - REDIS_HOST=${REDIS_HOST}
       - MYSQL_HOST=${MYSQL_HOST}
@@ -151,9 +136,6 @@ services:
       context: ./apps/pipeline
       dockerfile: ../../docker/Dockerfile.pipeline
     container_name: vc2_pipeline
-    ports:
-      - "8002:8002"
-    environment:
       - SERVICE_NAME=pipeline
       - REDIS_HOST=${REDIS_HOST}
       - REDIS_PORT=${REDIS_PORT}
@@ -180,9 +162,6 @@ services:
       context: ./apps/datacenter
       dockerfile: ../../docker/Dockerfile.datacenter
     container_name: vc2_datacenter
-    ports:
-      - "8003:8003"
-    environment:
       - SERVICE_NAME=datacenter
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
       - REDIS_HOST=${REDIS_HOST}
@@ -206,7 +185,6 @@ services:
 
   mysql:
     image: mysql:8.4
-    container_name: vc2_mysql
     environment:
       - MYSQL_ROOT_PASSWORD=Vc@2026#root
       - MYSQL_DATABASE=valuecube
@@ -228,9 +206,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: vc2_redis
-    ports:
-      - "6379:6379"
-    volumes:
       - redis_data:/data
     networks:
       - vc2_internal
@@ -246,9 +221,6 @@ services:
       context: ./docker
       dockerfile: Dockerfile.nginx
     container_name: vc2_nginx
-    ports:
-      - "80:80"
-      - "443:443"
     networks:
       - vc2_internal
     depends_on:
