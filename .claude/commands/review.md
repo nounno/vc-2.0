@@ -1,54 +1,98 @@
-# /review 代码审查
+# /review — 两阶段代码审查
 
-## 用途
-审查代码改动是否符合 VC2.0 项目规范。
+> 源自：Superpowers subagent-driven-development | 适配：VC2.0 CC 工具链
+> 继承自：原 `.claude/commands/review.md`（单阶段审查）
 
-## 执行步骤
+## 核心原则
 
-### 1. 获取改动列表
-```bash
-cd /home/ubuntu/vc-2.0
-git diff --stat
-```
+**规范合规优先于代码质量。** 顺序不可颠倒：
+1. **第一阶段**：spec-review — 验证"做的是不是对的事"
+2. **第二阶段**：code-quality-review — 验证"是不是对的做法"
 
-### 2. 逐文件审查
-对每个改动文件执行：
-```bash
-git diff <file_path>
-```
+---
 
-### 3. 审查维度
-
-| 维度 | 检查项 |
-|------|--------|
-| **安全性** | 是否包含真实密钥？SQL 是否参数化？用户输入是否校验？ |
-| **规范性** | 命名是否清晰？是否有必要的注释？格式是否一致？ |
-| **逻辑性** | 业务逻辑是否正确？边界情况是否处理？ |
-| **完整性** | 是否有遗漏？是否影响其他模块？ |
-| **CVT 规范** | 是否遵循 `rules/safety.md` 铁律？ |
-
-### 4. 忽略检查的文件
-- `node_modules/`
-- `.next/`
-- `dist/`
-- `.pyc`
-- `__pycache__/`
-
-### 5. 输出审查报告
+## 两阶段流程
 
 ```
-## 代码审查报告
-
-### 通过项
-- [file] : 描述
-
-### 未通过项
-- [file] : 问题描述 + 建议修复方式
-
-### 总体建议
-（可选，给出改进建议）
+CC 任务完成
+    ↓
+第一阶段：/spec-review（规范合规审查）
+    ↓ 通过
+第二阶段：/code-quality-review（代码质量审查）
+    ↓ 通过
+Hermes 复核
+    ↓ 通过
+汇报张炜
 ```
 
-### 6. 禁止的操作
-- 不修改任何代码（审查只读）
-- 不自行修复问题（报告后等待指令）
+---
+
+## 第一阶段：规范合规审查
+
+### 审查什么
+- CC 声称实现的功能 → 实际代码是否支撑？
+- 任务范围外是否有多余改动？
+- 业务逻辑理解是否有偏差？
+- 是否符合 VC2.0 规范（safety.md / CLAUDE.md）？
+
+### 读取文件
+- `.claude/commands/spec-review.md` — 完整审查流程
+
+### 通过标准
+所有检查项 ✅，无缺失、无多余、无偏差、无规范问题时通过。
+
+---
+
+## 第二阶段：代码质量审查
+
+### 审查什么
+- 代码组织（单一职责、文件大小）
+- 可维护性（magic number、重复代码、注释质量）
+- 测试覆盖
+- 安全性（SQL注入、凭证泄露）
+- VC2.0 专项（Docker、Python、Next.js 规范）
+
+### 读取文件
+- `.claude/commands/code-quality-review.md` — 完整审查流程
+
+### 通过标准
+- 无 Critical 问题
+- Important 问题 ≤ 2 个
+
+---
+
+## Hermes 复核清单
+
+两阶段审查都通过后，Hermes 复核：
+
+- [ ] `subtype` == "success"
+- [ ] `num_turns` < `max-turns`
+- [ ] `git diff --stat` 改动范围符合任务约束
+- [ ] 无密钥泄露（`grep` credentials / .env 关键词）
+- [ ] SQL 参数化（无 f-string 拼 SQL）
+- [ ] MySQL 连接：`host=mysql, port=3306`
+- [ ] 无端口暴露（docker-compose 无新增 ports 段）
+- [ ] spec-review 和 code-quality-review 报告已存档
+
+---
+
+## 审查失败处理
+
+```
+spec-review 失败 → 记录问题 → 重新调度 CC 修复 → 重走 spec-review
+code-quality-review 失败 → 记录问题 → 重新调度 CC 修复 → 重走 spec-review → 重走 code-quality-review
+```
+
+**禁止**：跳过 spec-review 直接进入 code-quality-review。
+
+---
+
+## 相关文件
+
+| 文件 | 用途 |
+|------|------|
+| `.claude/commands/spec-review.md` | 第一阶段：规范合规审查详细流程 |
+| `.claude/commands/code-quality-review.md` | 第二阶段：代码质量审查详细流程 |
+| `.claude/rules/safety.md` | CC 安全与操作规范（规范合规依据） |
+| `.claude/rules/commit.md` | Git 提交规范 |
+| `docs/vc2-spec.md` | VC2.0 规范 v2.0（战略资产、宪法依据） |

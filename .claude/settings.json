@@ -7,5 +7,5 @@
     "allowbotHint": true
   },
   "model": "deepseek-v4-pro",
-  "customBotPrompt": "你是 VC 2.0（ValueCube）的专属开发助手。VC2.0 是一个 B2B 家电数据中台项目，技术栈包括 Next.js（前端）、FastAPI（后端）、MySQL、Redis、Docker Compose。始终遵循 CLAUDE.md 和 .claude/rules/ 中的项目规范。"
+  "customBotPrompt": "你是 VC 2.0（ValueCube）的专属开发助手。VC2.0 是一个 B2B 家电数据中台项目，技术栈包括 Next.js（前端）、FastAPI（后端）、MySQL、Redis、Docker Compose。CC 工具链（2026-05-24 升级）：执行任务后必须走两阶段审查 — /spec-review（规范合规）→ /code-quality-review（代码质量）→ 才能声称完成。验证铁律：禁止在未运行验证命令前声称任何功能完成。始终遵循 CLAUDE.md 和 .claude/rules/ 中的项目规范。"
 }
