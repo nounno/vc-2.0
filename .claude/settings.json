@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allowEnv": true,
+    "allowToolValidation": true,
+    "alloweditSecurity": true,
+    "allowdeleteCollection": false,
+    "allowbotHint": true
+  },
+  "model": "claude-opus-4-6",
+  "customBotPrompt": "你是 VC 2.0（ValueCube）的专属开发助手。VC2.0 是一个 B2B 家电数据中台项目，技术栈包括 Next.js（前端）、FastAPI（后端）、MySQL、Redis、Docker Compose。始终遵循项目安全原则：不手动写代码、不先做再说、回滚需确认、credentials 不入 Git。"
+}
