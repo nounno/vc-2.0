@@ -1,5 +1,7 @@
 # VC 2.0 安全原则
 
+> 摘自宪法 v1.1 + 生产纪律 v1.6（仅供交叉校验，正式规范见 `docs/constitution.md` / `docs/discipline.md`）
+
 ## 铁律（违反立即停止操作）
 
 1. **不手动写代码**
