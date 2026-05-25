@@ -6,8 +6,7 @@ services:
       args:
         APP_NAME: admin
     container_name: vc2_admin
-    ports:
-      - "3001:3001"
+    # ports 已删除，仅通过 nginx 内部访问
     environment:
       - NEXT_PUBLIC_APP_NAME=admin
       - NEXT_PUBLIC_API_URL=/api/v1
@@ -36,12 +35,14 @@ services:
       dockerfile: ../../docker/Dockerfile.apps
       args:
         APP_NAME: supplier
+        NEXT_PUBLIC_API_BASE: /api/v1
+        NEXT_PUBLIC_PIPELINE_BASE: ""
     container_name: vc2_supplier
-    ports:
-      - "3002:3002"
+    # ports 已删除，仅通过 nginx 内部访问
     environment:
       - NEXT_PUBLIC_APP_NAME=supplier
-      - NEXT_PUBLIC_API_URL=/api/v1
+      - NEXT_PUBLIC_API_BASE=/api/v1
+      - NEXT_PUBLIC_PIPELINE_BASE=
       - NEXT_PUBLIC_SEARCH_URL=/search
       - MYSQL_HOST=${MYSQL_HOST}
       - MYSQL_PORT=${MYSQL_PORT}
@@ -68,8 +69,7 @@ services:
       args:
         APP_NAME: web
     container_name: vc2_web
-    ports:
-      - "3004:3004"
+    # ports 已删除，仅通过 nginx 内部访问
     environment:
       - NEXT_PUBLIC_APP_NAME=web
       - NEXT_PUBLIC_API_URL=/api/v1
@@ -149,6 +149,7 @@ services:
     container_name: vc2_pipeline
     environment:
       - SERVICE_NAME=pipeline
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - REDIS_HOST=${REDIS_HOST}
       - REDIS_PORT=${REDIS_PORT}
       - MYSQL_HOST=${MYSQL_HOST}
@@ -198,6 +199,7 @@ services:
 
   mysql:
     image: mysql:8.4
+    container_name: vc2_mysql
     environment:
       - MYSQL_ROOT_PASSWORD=Vc@2026#root
       - MYSQL_DATABASE=valuecube

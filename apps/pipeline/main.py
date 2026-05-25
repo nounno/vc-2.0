@@ -1333,7 +1333,7 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
 # ---------------------------------------------------------------------------
 LOW_QUALITY_THRESHOLD = 65.0  # confidence below this → is_low_quality=1
 LLM_FALLBACK_THRESHOLD = 65.0  # confidence below this + missing key fields → LLM fallback
-LLM_API_KEY = "sk-44b7bdcda8894647800b7654f6954a52"
+LLM_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 LLM_API_BASE = "https://api.deepseek.com/anthropic"
 LLM_MODEL = "deepseek-v4-pro"
 
