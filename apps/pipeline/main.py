@@ -153,8 +153,18 @@ class IntakeLayer:
                 pass
             return sheet_data, ext
 
-        wb = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
+        # Try openpyxl first; fall back to raw zipfile+ET for corrupted workbooks
+        try:
+            wb = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
+            sheet_data = self._load_xlsx_from_workbook(wb)
+        except Exception:
+            # Fallback: parse xlsx as raw XML via zipfile + ElementTree
+            sheet_data = self._load_xlsx_raw_xml(BytesIO(file_content))
 
+        return sheet_data, ext
+
+    def _load_xlsx_from_workbook(self, wb) -> list[tuple[str, list[list[str]]]]:
+        """Process an openpyxl Workbook object into sheet_data format."""
         SKIP_SHEET_KEYWORDS = ["目录", "导航", "index", "cover", "首页"]
 
         sheet_data = []
@@ -228,7 +238,215 @@ class IntakeLayer:
 
             sheet_data.append((sheet_name, sheet_rows))
 
-        return sheet_data, ext
+        return sheet_data
+
+    def _load_xlsx_raw_xml(self, file_io: BytesIO) -> list[tuple[str, list[list[str]]]]:
+        """Fallback: parse xlsx via zipfile + ElementTree, bypassing openpyxl style errors.
+
+        Handles:
+        - Shared strings table (xl/sharedStrings.xml)
+        - Inline string and numeric cells
+        - Column/row dimensional info
+        """
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        SKIP_SHEET_KEYWORDS = ["目录", "导航", "index", "cover", "首页"]
+
+        ns = {
+            "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+            "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        }
+
+        with zipfile.ZipFile(file_io, "r") as zf:
+            # Load shared strings
+            shared_strings: list[str] = []
+            if "xl/sharedStrings.xml" in zf.namelist():
+                ss_xml = zf.read("xl/sharedStrings.xml")
+                ss_root = ET.fromstring(ss_xml)
+                for si in ss_root.findall("main:si", ns):
+                    # Concatenate all text runs within an si element
+                    text_parts = []
+                    for t in si.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t"):
+                        if t.text:
+                            text_parts.append(t.text)
+                    shared_strings.append("".join(text_parts))
+
+            # Load workbook to map sheet names
+            wb_xml = zf.read("xl/workbook.xml")
+            wb_root = ET.fromstring(wb_xml)
+            sheets_elem = wb_root.find(".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheets")
+            if sheets_elem is None:
+                # Try without braces (some variants)
+                sheets_elem = wb_root.find(".//main:sheets", ns)
+
+            sheet_info: list[tuple[str, str]] = []  # (name, sheet_xml_path)
+            rels_xml = None
+            if "xl/_rels/workbook.xml.rels" in zf.namelist():
+                rels_xml = zf.read("xl/_rels/workbook.xml.rels")
+                rels_root = ET.fromstring(rels_xml)
+                # Build rid -> target map
+                rid_to_target = {}
+                for rel in rels_root:
+                    rid_to_target[rel.attrib.get("Id", "")] = rel.attrib.get("Target", "")
+
+            for sheet_elem in sheets_elem:
+                sname = sheet_elem.attrib.get("name", "Sheet")
+                sheet_id = sheet_elem.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "")
+                target = rid_to_target.get(sheet_id, "")
+                # target may be absolute ("/xl/worksheets/sheet1.xml" with leading slash)
+                # or relative ("worksheets/sheet1.xml"), normalize to zip-internal path
+                target = target.lstrip("/")
+                if not target.startswith("xl/"):
+                    target = "xl/" + target
+                sheet_info.append((sname, target))
+
+            sheet_data: list[tuple[str, list[list[str]]]] = []
+
+            for sheet_name, sheet_path in sheet_info:
+                if any(kw in sheet_name.lower() for kw in SKIP_SHEET_KEYWORDS):
+                    continue
+
+                sheet_xml = zf.read(sheet_path)
+                sheet_root = ET.fromstring(sheet_xml)
+
+                # Determine max col from <cols>
+                max_col = 1
+                cols_elem = sheet_root.find(".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}cols")
+                if cols_elem is not None:
+                    for col_elem in cols_elem:
+                        col_idx = int(col_elem.attrib.get("min", 1))
+                        max_col = max(max_col, col_idx)
+
+                # Parse dimension
+                dim = sheet_root.attrib.get("dimension", "")
+                if dim:
+                    # e.g. "A1:Z52"
+                    from re import search
+                    m = search(r"(\d+):(\d+)", dim)
+                    if m:
+                        pass  # we derive max_row from rows below
+
+                # Build cell_values from sheetData
+                cell_values: dict[tuple[int, int], str] = {}
+
+                # Parse dimension from sheetData
+                sheet_data_elem = sheet_root.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheetData")
+                if sheet_data_elem is None:
+                    sheet_data_elem = sheet_root.find(".//main:sheetData", ns)
+
+                max_row = 1
+                for row_elem in sheet_data_elem:
+                    row_num = int(row_elem.attrib.get("r", 1))
+                    max_row = max(max_row, row_num)
+                    for cell_elem in row_elem:
+                        cell_ref = cell_elem.attrib.get("r", "")
+                        # Parse cell reference, e.g. "A1" -> col=1, row=1
+                        col_str = "".join(c for c in cell_ref if c.isalpha())
+                        row_str = "".join(c for c in cell_ref if c.isdigit())
+                        if not col_str or not row_str:
+                            continue
+                        col_num = 0
+                        for ch in col_str.upper():
+                            col_num = col_num * 26 + (ord(ch) - ord('A') + 1)
+                        row_num = int(row_str)
+
+                        t = cell_elem.attrib.get("t", "")  # cell type
+                        v_elem = cell_elem.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v")
+                        is_elem = cell_elem.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}is")
+
+                        if is_elem is not None:
+                            # Inline string
+                            text_parts = []
+                            for t_elem in is_elem.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t"):
+                                if t_elem.text:
+                                    text_parts.append(t_elem.text)
+                            cell_values[(row_num, col_num)] = "".join(text_parts)
+                        elif t == "s":
+                            # Shared string
+                            if v_elem is not None and v_elem.text is not None:
+                                idx = int(v_elem.text)
+                                cell_values[(row_num, col_num)] = shared_strings[idx] if idx < len(shared_strings) else ""
+                            else:
+                                cell_values[(row_num, col_num)] = ""
+                        elif t == "inlineStr":
+                            if v_elem is not None:
+                                cell_values[(row_num, col_num)] = v_elem.text or ""
+                            else:
+                                cell_values[(row_num, col_num)] = ""
+                        else:
+                            # Numeric or other
+                            if v_elem is not None and v_elem.text is not None:
+                                cell_values[(row_num, col_num)] = v_elem.text
+                            else:
+                                cell_values[(row_num, col_num)] = ""
+
+                # Handle merged cells
+                for merge_elem in sheet_root.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}mergeCell"):
+                    ref = merge_elem.attrib.get("ref", "")
+                    if not ref:
+                        continue
+                    # e.g. "B2:D4"
+                    from re import match as re_match
+                    m = re_match(r"([A-Z]+)(\d+):([A-Z]+)(\d+)", ref)
+                    if m:
+                        min_col_str, min_row_str, max_col_str, max_row_str = m.groups()
+                        min_c = 0
+                        for ch in min_col_str.upper():
+                            min_c = min_c * 26 + (ord(ch) - ord('A') + 1)
+                        min_r = int(min_row_str)
+                        max_r = int(max_row_str)
+                        top_val = cell_values.get((min_r, min_c), "")
+                        for r in range(min_r, max_r + 1):
+                            for c in range(min_c, min_c + (ord(max_col_str) - ord(min_col_str) + 1)):
+                                if (r, c) not in cell_values:
+                                    cell_values[(r, c)] = top_val
+
+                # Re-derive max_col from parsed cells if dim wasn't helpful
+                if max_col == 1:
+                    for (r, c) in cell_values:
+                        max_col = max(max_col, c)
+
+                # Forward-fill cols 1 and 2
+                FILL_COLS = {1, 2}
+                for col in FILL_COLS:
+                    last_val = ""
+                    for r in range(1, max_row + 1):
+                        v = cell_values.get((r, col), "")
+                        if v.strip():
+                            last_val = v.strip()
+                        else:
+                            cell_values[(r, col)] = last_val
+
+                # Detect header row (same logic as openpyxl path)
+                HEADER_MIN_NONEMPTY_RATIO = 0.20
+                HEADER_MIN_LABEL_RATIO = 0.40
+                header_row_idx = None
+                for r in range(1, min(max_row + 1, 20)):
+                    row_vals = [cell_values.get((r, c), "") for c in range(1, max_col + 1)]
+                    non_empty = [v for v in row_vals if v.strip()]
+                    if not non_empty:
+                        continue
+                    nonempty_ratio = len(non_empty) / max_col
+                    label_ratio = sum(1 for v in non_empty if len(v) < 50) / len(non_empty)
+                    if nonempty_ratio < 0.35 and len(non_empty) < 5:
+                        continue
+                    if (nonempty_ratio > HEADER_MIN_NONEMPTY_RATIO and
+                            label_ratio >= HEADER_MIN_LABEL_RATIO):
+                        header_row_idx = r
+                        break
+
+                if header_row_idx is None:
+                    header_row_idx = 1
+
+                sheet_rows: list[list[str]] = []
+                for r in range(header_row_idx, max_row + 1):
+                    row = [cell_values.get((r, c), "") for c in range(1, max_col + 1)]
+                    sheet_rows.append(row)
+
+                sheet_data.append((sheet_name, sheet_rows))
+
+        return sheet_data
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +463,33 @@ class FormatDetector:
         elif ext == "zip":
             return "zip"
         return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Type-A Supplier Templates (硬编码列映射，优先于正则匹配)
+# --------------------------------------------------------------------------
+_SUPPLIER_TEMPLATES: dict[str, dict] = {
+    # 供应商25：两列表格，"型号"=model，"专属销售价"=price
+    "5.25价格输出表": {
+        "column_mapping": {0: "model", 1: "price"},
+        "fixed_fields": {"brand": "通用", "category": "空调"},
+    },
+    # 供应商18：第0列空，第5列是备注，第6列是价格
+    "5月25日VIP专属价格输出表": {
+        "column_mapping": {1: "brand", 2: "category", 3: "model",
+                          4: "text", 5: "text", 6: "price"},
+        "fixed_fields": {},
+    },
+}
+
+def _match_supplier_template(filename: str) -> str | None:
+    """文件名关键字模糊匹配，返回template_key或None"""
+    fname_clean = filename.replace(" ", "").replace("\u3000", "")
+    for template_key in _SUPPLIER_TEMPLATES:
+        key_clean = template_key.replace(" ", "").replace("\u3000", "")
+        if key_clean in fname_clean or fname_clean in key_clean:
+            return template_key
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1042,12 +1287,24 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
         headers = rows[0] if rows else []
         data_rows = rows[1:] if len(rows) > 1 else []
 
-        # Infer column mapping per-sheet (handles different column orders between sheets)
-        col_mapping = typer.infer(headers, data_rows)
+        # ── Type-A 供应商模板优先匹配 ──
+        template_key = _match_supplier_template(filename)
+        if template_key:
+            template = _SUPPLIER_TEMPLATES[template_key]
+            col_mapping = dict(template["column_mapping"])
+            fixed_fields = template.get("fixed_fields", {})
+        else:
+            col_mapping = typer.infer(headers, data_rows)
+            fixed_fields = {}
         extractor = EntityExtractor(col_mapping)
 
         for idx, row in enumerate(data_rows):
             parsed_entities, reasoning = extractor.extract(row, idx, sheet_name=sheet_name, conn=conn)
+            # ── 注入固定字段（Type-A 模板） ──
+            for field, value in fixed_fields.items():
+                if field not in parsed_entities:
+                    parsed_entities[field] = {"value": value, "confidence": 1.0}
+                    reasoning.append(f"模板固定字段: {field}={value}")
             raw_fields = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
             record = router.route(raw_fields, parsed_entities, reasoning, idx + 2, sheet_name=sheet_name)
             records.append(record)
@@ -1156,14 +1413,23 @@ def persist_records_to_db(records: list[dict], filename: str, supplier_id: int |
             parsed = record.get("parsed_entities", {})
             conf = record.get("confidence_score", 0.0)
             tier = record.get("quality_tier", "MEDIUM")
-            is_low = 1 if tier == "LOW" else 0
+            is_low = 1 if conf < LOW_QUALITY_THRESHOLD else 0
 
             # Extract field values safely
             brand = parsed.get("brand", {}).get("value") if parsed.get("brand") else None
             category = parsed.get("category", {}).get("value") if parsed.get("category") else None
             model_raw = parsed.get("model", {}).get("value") if parsed.get("model") else None
-            model_std = model_raw  # Use raw model as std if no further normalization
-            price = parsed.get("price", {}).get("value") if parsed.get("price") else None
+            model_std = (model_raw or "")[:128]  # Truncate to fit varchar(128)
+            raw_price = parsed.get("price", {}).get("value") if parsed.get("price") else None
+            # Explicitly convert to float and clamp to DECIMAL(10,2) safe range before INSERT
+            price = None
+            if raw_price is not None:
+                try:
+                    price = round(float(raw_price), 2)
+                    # Clamp to DECIMAL(10,2) range: max=9999999.99, min=-999999.99
+                    price = max(min(price, 9999999.99), -999999.99)
+                except (ValueError, TypeError):
+                    price = None
             price_type = None  # price_type not extracted in current pipeline
 
             if brand is None and category is None and model_raw is None:
