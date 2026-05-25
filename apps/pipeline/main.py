@@ -506,16 +506,16 @@ class ColumnTyper:
         for i, h in enumerate(headers):
             h_lower = h.lower().strip()
             # 品牌
-            if re.search(r"品牌|brand|厂商", h_lower):
+            if re.search(r"品牌|brand|厂商|品牌名称|牌子", h_lower):
                 mapping[i] = "brand"
             # 品类（一级分类）
             elif re.search(r"品类|category|分类|类型", h_lower):
                 mapping[i] = "category"
             # 型号
-            elif re.search(r"型号|model|货号|款式", h_lower):
+            elif re.search(r"型号|model|货号|款式|商品型号|产品型号", h_lower):
                 mapping[i] = "model"
             # 价格（支持多种列名）
-            elif re.search(r"价格|price|售价|单价|批发价|开票价|工程价|今日批价|供货价", h_lower):
+            elif re.search(r"价格|price|售价|单价|批发价|开票价|工程价|今日批价|供货价|专属销售价|最低零售价|明价|特价|活动价|会员价", h_lower):
                 mapping[i] = "price"
             # 库存/数量
             elif re.search(r"库存|stock|数量|存货|销量", h_lower):
