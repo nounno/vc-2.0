@@ -112,6 +112,50 @@ def health():
 def datacenter_health():
     return {"status": "ok", "service": "datacenter", "version": "2.7", "database": "mysql"}
 
+# ── 2.2 供应商基础列表 ────────────────────────────────────────────────────
+@app.get("/api/v1/suppliers")
+def list_suppliers(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+):
+    """
+    List all suppliers with basic info for admin dashboard.
+    Returns paginated supplier list.
+    """
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)
+
+    # Total count
+    cur.execute("SELECT COUNT(*) as cnt FROM suppliers")
+    total = cur.fetchone()["cnt"]
+
+    offset = (page - 1) * page_size
+    cur.execute("""
+        SELECT id, supplier_name, data_quality_score,
+               freshness, total_records, total_brands, avg_price,
+               price_tier, parse_success_rate,
+               updated_at as last_quote_at
+        FROM suppliers
+        ORDER BY data_quality_score DESC
+        LIMIT %s OFFSET %s
+    """, (page_size, offset))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    suppliers = []
+    for row in rows:
+        suppliers.append({
+            "id": str(row["id"]),
+            "name": row["supplier_name"],
+            "quality_score": float(row["data_quality_score"] or 0),
+            "is_active": row["freshness"] in ("live", "valid"),
+            "last_quote_at": row["last_quote_at"].isoformat() if row["last_quote_at"] else None,
+        })
+
+    return {"suppliers": suppliers, "total": total, "page": page, "page_size": page_size}
+
+
 # ── 2.2 供应商质量评分 ─────────────────────────────────────────────────────
 @app.get("/api/v1/suppliers/quality")
 def supplier_quality():
@@ -1172,6 +1216,86 @@ def procure_compare(items: str = Query(...)):
     compare_table.sort(key=lambda x: x.total)
 
     return ProcureCompareResponse(compare_table=compare_table)
+
+
+# GET /datacenter/stats/overview — 今日概览核心指标
+@app.get("/datacenter/stats/overview")
+def datacenter_stats_overview():
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT COUNT(*) as cnt FROM std_products")
+    total_products = cur.fetchone()["cnt"]
+    cur.execute("SELECT COUNT(*) as cnt FROM suppliers")
+    total_suppliers = cur.fetchone()["cnt"]
+    cur.execute("SELECT COUNT(*) as cnt FROM supplier_quotes WHERE DATE(created_at)=CURDATE()")
+    quotes_today = cur.fetchone()["cnt"]
+    cur.execute("SELECT COUNT(*) as cnt FROM supplier_quotes")
+    total_quotes = cur.fetchone()["cnt"]
+    cur.execute("""
+        SELECT COUNT(*) as cnt FROM supplier_quotes
+        WHERE confidence < 70 AND DATE(created_at)=CURDATE()
+    """)
+    low_conf_today = cur.fetchone()["cnt"]
+    cur.execute("""
+        SELECT COUNT(*) as cnt FROM correction_logs
+        WHERE DATE(applied_at)=CURDATE()
+    """)
+    corrections_today = cur.fetchone()["cnt"]
+    cur.close()
+    conn.close()
+    return {
+        "total_products": total_products,
+        "total_suppliers": total_suppliers,
+        "total_quotes": total_quotes,
+        "quotes_today": quotes_today,
+        "low_confidence_today": low_conf_today,
+        "corrections_today": corrections_today,
+    }
+
+
+# GET /datacenter/quality/overview — 今日概览质量指标
+@app.get("/datacenter/quality/overview")
+def datacenter_quality_overview():
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("""
+        SELECT
+            COUNT(*) as total_quotes,
+            SUM(CASE WHEN confidence >= 80 THEN 1 ELSE 0 END) as high_quality,
+            SUM(CASE WHEN confidence >= 50 AND confidence < 80 THEN 1 ELSE 0 END) as medium_quality,
+            SUM(CASE WHEN confidence < 50 THEN 1 ELSE 0 END) as low_quality,
+            AVG(confidence) as avg_confidence
+        FROM supplier_quotes
+        WHERE DATE(created_at) = CURDATE()
+    """)
+    row = cur.fetchone()
+    cur.execute("""
+        SELECT supplier_name, data_quality_score
+        FROM suppliers ORDER BY data_quality_score DESC LIMIT 5
+    """)
+    top_suppliers = cur.fetchall()
+    cur.execute("""
+        SELECT category,
+               AVG(confidence) as avg_confidence,
+               COUNT(*) as quote_count
+        FROM supplier_quotes
+        WHERE DATE(created_at) = CURDATE()
+        GROUP BY category
+        ORDER BY avg_confidence ASC
+        LIMIT 5
+    """)
+    lowest_categories = cur.fetchall()
+    cur.close()
+    conn.close()
+    return {
+        "today_total": row["total_quotes"] or 0,
+        "high_quality": row["high_quality"] or 0,
+        "medium_quality": row["medium_quality"] or 0,
+        "low_quality": row["low_quality"] or 0,
+        "avg_confidence": float(row["avg_confidence"] or 0),
+        "top_suppliers": top_suppliers,
+        "lowest_categories": lowest_categories,
+    }
 
 
 if __name__ == "__main__":

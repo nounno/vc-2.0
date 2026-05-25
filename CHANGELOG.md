@@ -1,5 +1,57 @@
 # VC 2.0 开发日志 (Development Log)
 
+## 2026-05-24 — 管理后台 API 路由修复 ✅
+
+### 问题
+Nginx admin.conf 把 `/api/v1/` 全打到 datacenter:8003，但前端调用的路径和后端实际路由不匹配。
+
+### 修复内容
+
+**1. Nginx admin.conf 路由拆分**
+- `/api/v1/admin/*` → `vc2_api:8000`（admin_routes.py）
+- `/api/v1/pipeline/*` → `vc2_api:8000`（pipeline stats）
+- `/api/v1/datacenter/*` → `vc2_datacenter:8003`（rewrite 去前缀：`/api/v1/datacenter/X` → `/datacenter/X`）
+- `/api/v1/{quotes,suppliers,products}` → `vc2_datacenter:8003`
+- `/api/v1/auth/*` → `vc2_api:8000`
+
+**2. datacenter 镜像 rebuild**
+- 根因：build context 传输了 2.8GB（DOCKERFILE 在 docker/ 但 context 是 root）
+- 修复：新建 `.dockerignore` 排除大目录 + 修正 COPY 路径（`apps/datacenter/`）
+- 效果：build 时间 300s+ → 0.56s，context 2.8GB → 202B
+
+**3. nginx rewrite 500 问题**
+- `set $upstream` + `proxy_pass http://$upstream` + `proxy_redirect default` 不兼容
+- 改用标准 rewrite 语法（`rewrite ... break` + 固定 `proxy_pass`）+ `proxy_redirect off`
+
+### 验收结果（2026-05-24 13:42 CST）
+
+| # | 验收项 | 状态 | 证据 |
+|---|--------|------|------|
+| 1 | GET /api/v1/datacenter/stats/overview | ✅ 200 | `{"total_products":33974,"total_suppliers":12,"total_quotes":139674,...}` |
+| 2 | GET /api/v1/datacenter/quality/overview | ✅ 200 | `{"today_total":0,"high_quality":0,...}` |
+| 3 | GET /api/v1/admin/accounts/stats | ✅ 200 | `{"total_accounts":1,"active_accounts":1,...}` |
+| 4 | GET /api/v1/admin/logs/stats | ✅ 200 | `{"total":1,"by_level":{"INFO":1},...}` |
+| 5 | GET /api/v1/pipeline/stats | ✅ 200 | `{"total_tasks":4,"running_tasks":4,...}` |
+
+**通过率：5/5**
+
+### 待处理
+- [x] datacenter 镜像 rebuild 超时问题 — 已解决（见下方）
+
+### 附：datacenter 镜像 rebuild 超时排查
+
+**现象：** `docker build -f docker/Dockerfile.datacenter` 超时（>300s）
+
+**根因：** Dockerfile 在 `docker/` 但 context 是 vc-2.0 root（`docker build -f ... .`），传输了整个 2.8GB 目录（apps/admin 1.1G + web 686M + search 699M + supplier 373M + 缓存）
+
+**修复：**
+1. 新建 `.dockerignore`，排除 apps/ 下各 app 目录、backups/、.git/、node_modules 等
+2. 修正 Dockerfile.datacenter 的 COPY 路径：`requirements.txt` → `apps/datacenter/requirements.txt`，`.` → `apps/datacenter/`
+
+**效果：** build 时间 300s+ → **0.56s**，context 2.8GB → **202B**
+
+---
+
 ## 2026-05-21 — 部署验证完成 ✅
 
 ### 提交: `e3c48d1` — fix: nginx upstream ports + export_routes include + globals.css

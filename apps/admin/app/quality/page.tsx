@@ -899,8 +899,8 @@ export default function QualityAuditPage() {
               )}
             </div>
 
-            {/* Action Bar */}
-            <div className="p-6 border-t border-gray-800 bg-[#111111]">
+            {/* Action Bar — sticky to viewport bottom */}
+            <div className="sticky bottom-0 z-10 p-6 border-t border-gray-800 bg-[#111111]">
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => handleDecision('skip')}

@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# Python
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Node.js
+**/node_modules
+**/.next
+**/.nuxt
+**/.cache
+
+# VC2 large dirs (per-app build, not needed in context)
+apps/admin/
+apps/web/
+apps/supplier/
+apps/search/
+
+# Local data
+backups/
+mysql/
+
+# Environment
+.env
+.env.*
+credentials.md
+
+# OS
+.DS_Store
+Thumbs.db
