@@ -2,16 +2,21 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install uv via official script (bypasses PyPI)
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && apt-get purge -y curl ca-certificates \
-    && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+# ── 阿里云 apt 镜像（覆盖 debian sources.list）────────────────────────
+RUN echo 'deb http://mirrors.aliyun.com/debian/ bookworm main non-free-firmware\n\
+deb http://mirrors.aliyun.com/debian/ bookworm-updates main non-free-firmware\n\
+deb http://mirrors.aliyun.com/debian-security/ bookworm-security main non-free-firmware' \
+> /etc/apt/sources.list \
+&& apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+&& curl -LsSf https://astral.sh/uv/install.sh | sh \
+&& apt-get purge -y curl ca-certificates \
+&& apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 ENV PATH="/root/.local/bin:$PATH"
-ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 COPY requirements.txt .
-RUN uv pip install --system --no-cache -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt \
+    --index-url https://mirrors.aliyun.com/pypi/simple \
+    --trusted-host mirrors.aliyun.com
 
 COPY . .
 
