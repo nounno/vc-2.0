@@ -70,7 +70,7 @@ export default function SearchPage() {
       const response = await fetch(`/api/v1/search?${params.toString()}`)
 
       if (!response.ok) {
-        throw new Error('Search service unavailable')
+        throw new Error('搜索服务不可用')
       }
 
       const data: SearchResponse = await response.json()

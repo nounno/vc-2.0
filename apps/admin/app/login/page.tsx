@@ -26,7 +26,7 @@ export default function AdminLoginPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        setError(data.detail || 'Invalid credentials')
+        setError(data.detail || '用户名或密码错误')
         setLoading(false)
         return
       }
@@ -36,7 +36,7 @@ export default function AdminLoginPage() {
       // Force full page reload so middleware sees the HttpOnly cookie
       window.location.href = '/'
     } catch (err) {
-      setError('Network error. Please try again.')
+      setError('网络错误，请重试')
       setLoading(false)
     }
   }
@@ -46,8 +46,8 @@ export default function AdminLoginPage() {
       <div className="w-full max-w-md px-6">
         <div className="bg-[#111111] border border-[#1f1f1f] rounded-lg p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-white mb-2">ValueCube Admin</h1>
-            <p className="text-gray-400 text-sm">Sign in to access the admin portal</p>
+            <h1 className="text-2xl font-bold text-white mb-2">价值魔方管理后台</h1>
+            <p className="text-gray-400 text-sm">登录以访问管理后台</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -59,7 +59,7 @@ export default function AdminLoginPage() {
 
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
-                Username
+                用户名
               </label>
               <input
                 id="username"
@@ -67,14 +67,14 @@ export default function AdminLoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
-                placeholder="Enter username"
+                placeholder="请输入用户名"
                 required
               />
             </div>
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
-                Password
+                密码
               </label>
               <input
                 id="password"
@@ -82,7 +82,7 @@ export default function AdminLoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
-                placeholder="Enter password"
+                placeholder="请输入密码"
                 required
               />
             </div>
@@ -92,7 +92,7 @@ export default function AdminLoginPage() {
               disabled={loading}
               className="w-full bg-[#3b82f6] hover:bg-[#2563eb] disabled:bg-[#3b82f6]/50 text-white font-medium py-3 rounded transition-colors"
             >
-              {loading ? 'Signing in...' : 'Sign In'}
+              {loading ? '登录中...' : '登录'}
             </button>
           </form>
         </div>

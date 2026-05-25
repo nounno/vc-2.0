@@ -95,21 +95,21 @@ function getTypeColor(type: string): string {
 // ============ API Functions ============
 async function fetchPipelineStats(): Promise<PipelineStats> {
   const res = await fetch('/api/v1/pipeline/stats')
-  if (!res.ok) throw new Error('Failed to fetch pipeline stats')
+  if (!res.ok) throw new Error('管道统计加载失败')
   const data: ApiResponse<PipelineStats> = await res.json()
   return data.data
 }
 
 async function fetchPipelineTasks(): Promise<PipelineTask[]> {
   const res = await fetch('/api/v1/pipeline/tasks')
-  if (!res.ok) throw new Error('Failed to fetch pipeline tasks')
+  if (!res.ok) throw new Error('管道任务加载失败')
   const data: ApiResponse<PipelineTask[]> = await res.json()
   return data.data || []
 }
 
 async function fetchPipelineLogs(limit: number = 20): Promise<PipelineLog[]> {
   const res = await fetch(`/api/v1/pipeline/logs?limit=${limit}`)
-  if (!res.ok) throw new Error('Failed to fetch pipeline logs')
+  if (!res.ok) throw new Error('管道日志加载失败')
   const data: ApiResponse<PipelineLog[]> = await res.json()
   return data.data || []
 }
@@ -120,14 +120,14 @@ async function updateTaskStatus(taskId: string, status: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status })
   })
-  if (!res.ok) throw new Error('Failed to update task status')
+  if (!res.ok) throw new Error('任务状态更新失败')
 }
 
 async function triggerTask(taskId: string): Promise<void> {
   const res = await fetch(`/api/v1/pipeline/tasks/${taskId}/trigger`, {
     method: 'POST'
   })
-  if (!res.ok) throw new Error('Failed to trigger task')
+  if (!res.ok) throw new Error('任务触发失败')
 }
 
 // ============ Components ============
@@ -190,7 +190,7 @@ export default function PipelinePage() {
       setLogs(logsData)
       setStats(statsData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data')
+      setError(err instanceof Error ? err.message : '数据加载失败')
     } finally {
       setLoading(false)
     }
@@ -206,7 +206,7 @@ export default function PipelinePage() {
       await updateTaskStatus(taskId, newStatus)
       await fetchData()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update status')
+      setError(err instanceof Error ? err.message : '状态更新失败')
     } finally {
       setUpdating(null)
     }
@@ -218,7 +218,7 @@ export default function PipelinePage() {
       await triggerTask(taskId)
       await fetchData()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to trigger task')
+      setError(err instanceof Error ? err.message : '任务触发失败')
     } finally {
       setUpdating(null)
     }

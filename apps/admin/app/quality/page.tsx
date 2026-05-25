@@ -122,6 +122,7 @@ export default function QualityAuditPage() {
   const [loading, setLoading] = useState(true)
   const [loadingSimilar, setLoadingSimilar] = useState(false)
   const [activeTab, setActiveTab] = useState<'detail' | 'correction' | 'similar'>('detail')
+  const [error, setError] = useState<string | null>(null)
   
   // Filter state
   const [searchQuery, setSearchQuery] = useState('')
@@ -168,6 +169,7 @@ export default function QualityAuditPage() {
       }
     } catch (error) {
       console.error('Failed to fetch low confidence items:', error)
+      setError('数据加载失败')
       // Fallback to mock data for demo
       const mockData: LowConfidenceItem[] = [
         {
@@ -429,8 +431,15 @@ export default function QualityAuditPage() {
             <div className="bg-green-500/10 rounded-lg p-2 text-center">
               <div className="text-lg font-bold text-green-400">{highCount}</div>
               <div className="text-xs text-gray-400">高置信</div>
-            </div>
           </div>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center justify-between mb-3">
+            <span className="text-red-400 text-xs">{error}</span>
+            <button onClick={fetchItems} className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-400 px-2 py-0.5 rounded transition-colors">重试</button>
+          </div>
+        )}
 
           {/* Search */}
           <div className="relative mb-3">

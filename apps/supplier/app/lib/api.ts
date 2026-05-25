@@ -1,5 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8003'
-const PIPELINE_BASE = process.env.NEXT_PUBLIC_PIPELINE_BASE || 'http://localhost:8002'
+const API_BASE = '/api/v1'
+const PIPELINE_BASE = ''
 
 export interface TaskResult {
   status: string
@@ -75,8 +75,12 @@ export async function getQuoteHistory(
   params.append('page', page.toString())
   params.append('page_size', '10')
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
   const response = await fetch(`${API_BASE}/quotes?${params.toString()}`, {
     method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
   })
 
   if (!response.ok) {
@@ -92,8 +96,12 @@ export async function getQualityFeedback(
   const params = new URLSearchParams()
   if (supplier_id) params.append('supplier_id', supplier_id)
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
   const response = await fetch(`${API_BASE}/feedback?${params.toString()}`, {
     method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
   })
 
   if (!response.ok) {
@@ -104,8 +112,12 @@ export async function getQualityFeedback(
 }
 
 export async function getSupplierProfile(supplier_id: string): Promise<SupplierProfile> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
   const response = await fetch(`${API_BASE}/suppliers/${supplier_id}`, {
     method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
   })
 
   if (!response.ok) {
@@ -126,8 +138,12 @@ export async function getSupplierSummary(supplier_id?: string): Promise<{
   const params = new URLSearchParams()
   if (supplier_id) params.append('supplier_id', supplier_id)
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
   const response = await fetch(`${API_BASE}/summary?${params.toString()}`, {
     method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
   })
 
   if (!response.ok) {

@@ -38,7 +38,7 @@ function calculateTimeAgo(dateString: string): string {
 // API Functions
 async function fetchFreshness(): Promise<{ suppliers: FreshnessSupplier[] }> {
   const res = await fetch('/api/v1/suppliers/freshness')
-  if (!res.ok) throw new Error('Failed to fetch freshness data')
+  if (!res.ok) throw new Error('数据新鲜度加载失败')
   return res.json()
 }
 
@@ -100,7 +100,7 @@ export default function SuppliersPage() {
       setFreshnessData(freshness.suppliers || [])
       setQualityData(Array.isArray(quality) ? quality : [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch data')
+      setError(err instanceof Error ? err.message : '数据加载失败')
     } finally {
       setLoading(false)
     }

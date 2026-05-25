@@ -5,41 +5,33 @@ import { BookOpen, TrendingUp, Search, ChevronRight, RefreshCw } from 'lucide-re
 interface Brand {
   brand: string
   record_count: number
-  avg_price: number
-  share_pct: number
-}
-
-interface BrandSummary {
-  total_brands: number
-  top_brands: { brand: string; count: number }[]
 }
 
 export default function BrandsPage() {
   const [brands, setBrands] = useState<Brand[]>([])
-  const [summary, setSummary] = useState<BrandSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  const pageSize = 50
 
   const fetchData = async () => {
     setLoading(true)
+    setError(null)
     try {
-      const [qualityRes] = await Promise.all([
-        fetch('/api/v1/suppliers/quality'),
-      ])
-      if (qualityRes.ok) {
-        const data = await qualityRes.json()
-        // Flatten brands from all suppliers
-        const allBrands: Record<string, Brand> = {}
-        for (const s of data.suppliers || []) {
-          if (s.total_brands) {
-            // suppliers/quality doesn't return per-brand data
-            // Fall back to supplier brand list
-          }
-        }
-        setSummary({ total_brands: data.suppliers?.length || 0, top_brands: [] })
+      const res = await fetch('/api/v1/admin/brands')
+      if (res.ok) {
+        const data = await res.json()
+        const brandList = (data.brands || []).map((b: any) => ({
+          brand: b.brand,
+          record_count: b.product_count,
+        }))
+        setBrands(brandList)
       }
     } catch (e) {
-      console.error(e)
+      setError('数据加载失败')
+      setLoading(false)
+      return
     } finally {
       setLoading(false)
     }
@@ -51,26 +43,26 @@ export default function BrandsPage() {
     b.brand.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
+  const paginated = filtered.slice((page - 1) * pageSize, page * pageSize)
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">品牌管理</h1>
-          <p className="text-sm text-[#a1a1a1] mt-1">查看所有品牌统计数据与分布</p>
+          <p className="text-sm text-[#a1a1a1] mt-1">查看各品类商品数量</p>
         </div>
         <button onClick={fetchData} className="flex items-center gap-2 bg-[#1a1a1a] hover:bg-[#262626] text-white px-4 py-2 rounded-lg border border-[#262626] text-sm">
           <RefreshCw className="w-4 h-4" /> 刷新
         </button>
       </div>
 
-      <div className="bg-[#1a1a1a] rounded-xl border border-[#262626] p-6 mb-6">
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-[#141414] rounded-xl p-5 border border-[#262626]">
-            <div className="text-sm text-[#a1a1a1] mb-2">品牌总数</div>
-            <div className="text-3xl font-bold text-white">{summary?.total_brands ?? '--'}</div>
-          </div>
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between mb-4">
+          <span className="text-red-400 text-sm">{error}</span>
+          <button onClick={fetchData} className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-1 rounded transition-colors">重试</button>
         </div>
-      </div>
+      )}
 
       <div className="bg-[#1a1a1a] rounded-xl border border-[#262626] overflow-hidden">
         <div className="p-4 border-b border-[#262626]">
@@ -89,26 +81,38 @@ export default function BrandsPage() {
           <thead>
             <tr className="border-b border-[#262626]">
               <th className="text-left text-xs font-medium text-[#a1a1a1] px-6 py-3">品牌</th>
-              <th className="text-left text-xs font-medium text-[#a1a1a1] px-6 py-3">记录数</th>
-              <th className="text-left text-xs font-medium text-[#a1a1a1] px-6 py-3">平均价格</th>
-              <th className="text-left text-xs font-medium text-[#a1a1a1] px-6 py-3">占比</th>
+              <th className="text-left text-xs font-medium text-[#a1a1a1] px-6 py-3">商品数</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={4} className="px-6 py-8 text-center text-[#666]">加载中...</td></tr>
+              <tr><td colSpan={2} className="px-6 py-8 text-center text-[#666]">加载中...</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={4} className="px-6 py-8 text-center text-[#666]">暂无数据</td></tr>
-            ) : filtered.map(b => (
+              <tr><td colSpan={2} className="px-6 py-8 text-center text-[#666]">暂无数据</td></tr>
+            ) : paginated.map(b => (
               <tr key={b.brand} className="border-b border-[#262626] hover:bg-[#1f1f1f]">
                 <td className="px-6 py-4 text-white font-medium">{b.brand}</td>
                 <td className="px-6 py-4 text-[#a1a1a1]">{b.record_count.toLocaleString()}</td>
-                <td className="px-6 py-4 text-[#a1a1a1]">¥{b.avg_price.toLocaleString()}</td>
-                <td className="px-6 py-4 text-[#a1a1a1]">{b.share_pct.toFixed(1)}%</td>
               </tr>
             ))}
           </tbody>
         </table>
+        <div className="px-6 py-4 border-t border-[#262626] flex items-center justify-between">
+          <span className="text-sm text-[#666]">共 {filtered.length} 条</span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-3 py-1 bg-[#262626] hover:bg-[#333] disabled:opacity-50 text-white text-sm rounded"
+            >上一页</button>
+            <span className="text-sm text-[#a1a1a1]">第 {page} / {Math.ceil(filtered.length / pageSize) || 1} 页</span>
+            <button
+              onClick={() => setPage(p => p + 1)}
+              disabled={page >= Math.ceil(filtered.length / pageSize)}
+              className="px-3 py-1 bg-[#262626] hover:bg-[#333] disabled:opacity-50 text-white text-sm rounded"
+            >下一页</button>
+          </div>
+        </div>
       </div>
     </div>
   )

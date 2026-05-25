@@ -5,6 +5,7 @@ from auth_routes import router as auth_router
 from suppliers_routes import router as suppliers_router
 from products_routes import router as products_router
 from quotes_routes import router as quotes_router
+from upload_routes import router as upload_router
 
 app = FastAPI()
 
@@ -14,6 +15,7 @@ app.include_router(products_router)
 app.include_router(quotes_router)
 app.include_router(export_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(upload_router)
 
 
 @app.get("/health")
@@ -33,7 +35,7 @@ def get_suppliers():
 
 @app.post("/suppliers")
 def create_supplier():
-    return {"message": "not implemented"}
+    return {"message": "功能未实现"}
 
 
 @app.get("/skus")
@@ -43,7 +45,7 @@ def get_skus():
 
 @app.post("/skus")
 def create_sku():
-    return {"message": "not implemented"}
+    return {"message": "功能未实现"}
 
 
 @app.get("/quotes")
@@ -53,4 +55,4 @@ def get_quotes():
 
 @app.post("/quotes")
 def create_quote():
-    return {"message": "not implemented"}
+    return {"message": "功能未实现"}

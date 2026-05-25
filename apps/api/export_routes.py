@@ -37,7 +37,7 @@ def get_table_name(table_key: str) -> str:
     if not table_name:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid table '{table_key}'. Allowed tables: {list(ALLOWED_TABLES.keys())}"
+            detail=f"无效的表名 '{table_key}'，允许的表: {list(ALLOWED_TABLES.keys())}"
         )
     return table_name
 

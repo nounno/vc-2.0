@@ -82,7 +82,7 @@ function getScoreBarColor(score: number): string {
 // ============ API Functions ============
 async function fetchAccountStats(): Promise<AccountStats> {
   const res = await fetch('/api/v1/admin/accounts/stats')
-  if (!res.ok) throw new Error('Failed to fetch account stats')
+  if (!res.ok) throw new Error('账户统计加载失败')
   const data: ApiResponse<AccountStats> = await res.json()
   return data.data
 }
@@ -91,7 +91,7 @@ async function fetchAccounts(page: number = 1, pageSize: number = 10, search: st
   const params = new URLSearchParams({ page: page.toString(), page_size: pageSize.toString() })
   if (search) params.append('search', search)
   const res = await fetch(`/api/v1/admin/accounts?${params}`)
-  if (!res.ok) throw new Error('Failed to fetch accounts')
+  if (!res.ok) throw new Error('账户列表加载失败')
   const data: ApiResponse<Account[]> = await res.json()
   return { data: data.data || [], total: data.total || 0 }
 }
@@ -102,7 +102,7 @@ async function updateAccountStatus(accountId: string, status: string): Promise<v
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status })
   })
-  if (!res.ok) throw new Error('Failed to update account status')
+  if (!res.ok) throw new Error('账户状态更新失败')
 }
 
 // ============ Components ============
@@ -166,7 +166,7 @@ export default function AccountsPage() {
       setTotal(accountsData.total)
       setStats(statsData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data')
+      setError(err instanceof Error ? err.message : '数据加载失败')
     } finally {
       setLoading(false)
     }
@@ -188,7 +188,7 @@ export default function AccountsPage() {
       await updateAccountStatus(accountId, newStatus)
       await fetchData()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update status')
+      setError(err instanceof Error ? err.message : '状态更新失败')
     } finally {
       setUpdating(null)
     }

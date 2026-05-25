@@ -1415,10 +1415,24 @@ class LLMFallbackBatch:
         return self.batch
 
 
+def _sanitize_filename(filename: str) -> str:
+    """Remove special characters and ensure safe filename for DB storage."""
+    # Replace common problematic chars with underscore
+    filename = re.sub(r'[\/\\:*?"<>|]', '_', filename)
+    # Ensure it's valid UTF-8
+    try:
+        filename = filename.encode('utf-8', errors='replace').decode('utf-8')
+    except Exception:
+        filename = 'unknown_file'
+    return filename
+
+
 def _get_or_create_supplier(filename: str, conn) -> int | None:
     """Get or create a supplier record. Returns supplier_id."""
+    # Sanitize filename to handle Chinese chars and special chars
+    safe_filename = _sanitize_filename(filename)
     # Derive supplier_code from filename (use first 64 chars of filename as code)
-    supplier_code = filename[:64]
+    supplier_code = safe_filename[:64]
     cur = conn.cursor(dictionary=True)
     cur.execute("SELECT id FROM suppliers WHERE supplier_code = %s", (supplier_code,))
     row = cur.fetchone()
@@ -1427,11 +1441,11 @@ def _get_or_create_supplier(filename: str, conn) -> int | None:
         cur.close()
         return sid
     # Create new supplier
-    supplier_name = supplier_code.split("/")[-1].split(".")[0][:128]
+    supplier_name = safe_filename.split("/")[-1].split(".")[0][:128]
     cur.execute(
         "INSERT INTO suppliers (supplier_code, supplier_name, source_file, freshness, total_records) "
         "VALUES (%s, %s, %s, 'pending', 0)",
-        (supplier_code, supplier_name, filename),
+        (supplier_code, supplier_name, safe_filename),
     )
     sid = cur.lastrowid
     conn.commit()

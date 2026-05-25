@@ -23,10 +23,12 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [page, setPage] = useState(1)
+  const [error, setError] = useState<string | null>(null)
   const pageSize = 50
 
   const fetchData = async () => {
     setLoading(true)
+    setError(null)
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
       if (searchQuery) params.set('model', searchQuery)
@@ -36,7 +38,9 @@ export default function ProductsPage() {
         setData(result)
       }
     } catch (e) {
-      console.error(e)
+      setError('数据加载失败')
+      setLoading(false)
+      return
     } finally {
       setLoading(false)
     }
@@ -55,6 +59,13 @@ export default function ProductsPage() {
           <RefreshCw className="w-4 h-4" /> 刷新
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between mb-4">
+          <span className="text-red-400 text-sm">{error}</span>
+          <button onClick={fetchData} className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-1 rounded transition-colors">重试</button>
+        </div>
+      )}
 
       <div className="bg-[#1a1a1a] rounded-xl border border-[#262626] overflow-hidden">
         <div className="p-4 border-b border-[#262626]">

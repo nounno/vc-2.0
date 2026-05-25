@@ -623,10 +623,86 @@ def get_pipeline_task_status(task_id: int):
     cur.close()
     db.close()
     if not row:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
     return dict(row)
 
 
 @router.post("/pipeline/tasks/{task_id}/trigger")
 def trigger_pipeline_task(task_id: int):
     return {"message": "triggered", "task_id": task_id}
+
+
+# --------------------------------------------------------------------------
+# 8. /admin/brands  → brands page
+# --------------------------------------------------------------------------
+@router.get("/admin/brands")
+def get_admin_brands():
+    """获取品牌列表及商品数量"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("""
+        SELECT brand, COUNT(*) as product_count
+        FROM std_products
+        GROUP BY brand
+        ORDER BY product_count DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    db.close()
+    return {"brands": [dict(r) for r in rows], "total": len(rows)}
+
+
+# --------------------------------------------------------------------------
+# 9. /admin/categories  → categories page
+# --------------------------------------------------------------------------
+@router.get("/admin/categories")
+def get_admin_categories():
+    """获取品类列表及商品数量"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("""
+        SELECT category, COUNT(*) as product_count
+        FROM std_products
+        GROUP BY category
+        ORDER BY product_count DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    db.close()
+    return {"categories": [dict(r) for r in rows], "total": len(rows)}
+
+
+# --------------------------------------------------------------------------
+# 10. /admin/columns  → column mapping page (admin namespace)
+# --------------------------------------------------------------------------
+@router.get("/admin/columns")
+def get_admin_columns(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """获取字段映射配置"""
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("SELECT COUNT(*) as total FROM column_mappings")
+    total = cur.fetchone()["total"]
+
+    offset = (page - 1) * page_size
+    cur.execute("""
+        SELECT id, source_table, source_col, std_col, data_type,
+               transform_rule, is_active, created_at
+        FROM column_mappings
+        ORDER BY source_table, source_col
+        LIMIT %s OFFSET %s
+    """, [page_size, offset])
+    rows = cur.fetchall()
+    cur.close()
+    db.close()
+
+    return {
+        "columns": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": math.ceil(total / page_size) if total > 0 else 0,
+    }

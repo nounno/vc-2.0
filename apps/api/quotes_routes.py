@@ -121,7 +121,7 @@ def get_quote(quote_id: int):
     cur.close()
     db.close()
     if not row:
-        raise HTTPException(status_code=404, detail="Quote not found")
+        raise HTTPException(status_code=404, detail="报价不存在")
     return row
 
 
@@ -174,7 +174,7 @@ def update_quote_status(quote_id: int, payload: QuoteStatusUpdate):
     Update quote status: verified, reverted, or rejected.
     """
     if payload.status not in ("verified", "reverted", "rejected"):
-        raise HTTPException(status_code=400, detail="status must be one of: verified, reverted, rejected")
+        raise HTTPException(status_code=400, detail="状态值必须为: verified(已审核), reverted(已回退), rejected(已拒绝)")
 
     db = get_db()
     cur = db.cursor()
@@ -202,7 +202,7 @@ def update_quote_status(quote_id: int, payload: QuoteStatusUpdate):
     db.commit()
     if cur.rowcount == 0:
         cur.close(); db.close()
-        raise HTTPException(status_code=404, detail="Quote not found")
+        raise HTTPException(status_code=404, detail="报价不存在")
 
     cur.execute("SELECT * FROM supplier_quotes WHERE id=%s", (quote_id,))
     result = cur.fetchone()

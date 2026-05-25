@@ -76,15 +76,15 @@ def require_auth(allowed_roles: list[str] | None = None):
                 access_token = auth_header[7:]
 
         if not access_token:
-            raise HTTPException(status_code=401, detail="Not authenticated")
+            raise HTTPException(status_code=401, detail="未登录")
         try:
             payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
             username = payload.get("sub")
             role = payload.get("role")
             if not username or not role:
-                raise HTTPException(status_code=401, detail="Invalid token payload")
+                raise HTTPException(status_code=401, detail="令牌载荷无效")
             if allowed_roles and role not in allowed_roles:
-                raise HTTPException(status_code=403, detail="Forbidden")
+                raise HTTPException(status_code=403, detail="权限不足")
             # Re-fetch from DB to ensure user still exists
             db = get_db()
             cur = db.cursor()
@@ -93,12 +93,12 @@ def require_auth(allowed_roles: list[str] | None = None):
             cur.close()
             db.close()
             if not row:
-                raise HTTPException(status_code=401, detail="User not found")
+                raise HTTPException(status_code=401, detail="用户不存在")
             return row
         except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token expired")
+            raise HTTPException(status_code=401, detail="令牌已过期")
         except jwt.JWTError:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(status_code=401, detail="令牌无效")
     return dependency
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ def login(payload: LoginRequest, response: Response):
     db.close()
 
     if not user or not verify_password(payload.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token = create_access_token({"sub": user["username"], "role": user["role"]})
     # Set both cookies for backward compatibility
@@ -147,14 +147,14 @@ def login(payload: LoginRequest, response: Response):
             "username": user["username"],
             "role": user["role"],
         },
-        "message": "Login successful",
+        "message": "登录成功",
     }
 
 
 @router.post("/auth/logout")
 def logout(response: Response):
     response.delete_cookie(key="access_token")
-    return {"message": "Logged out"}
+    return {"message": "已退出登录"}
 
 
 @router.get("/auth/me")

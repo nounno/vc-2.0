@@ -77,10 +77,12 @@ export default function RulesPage() {
   const [filterField, setFilterField] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
   const [selectedRule, setSelectedRule] = useState<Rule | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   // Fetch rules + summary
   const fetchData = async () => {
     setLoading(true)
+    setError(null)
     try {
       const params = new URLSearchParams()
       if (filterField !== 'all') params.set('field', filterField)
@@ -98,7 +100,9 @@ export default function RulesPage() {
         setSummary(summaryData)
       }
     } catch (err) {
-      console.error('Failed to fetch rules:', err)
+      setError('数据加载失败')
+      setLoading(false)
+      return
     } finally {
       setLoading(false)
     }
@@ -185,6 +189,13 @@ export default function RulesPage() {
           <div className="text-4xl font-bold text-white">{totalRules}</div>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between mb-4">
+          <span className="text-red-400 text-sm">{error}</span>
+          <button onClick={fetchData} className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-1 rounded transition-colors">重试</button>
+        </div>
+      )}
 
       {/* Filter Bar */}
       <div className="flex flex-wrap gap-4 mb-6">

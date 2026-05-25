@@ -14,7 +14,7 @@ export function useApi(options: UseApiOptions = {}) {
       Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)))
     }
     const res = await fetch(url.toString())
-    if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`)
+    if (!res.ok) throw new Error(`API ${path} 请求失败 (${res.status})`)
     return res.json()
   }
 
@@ -24,7 +24,7 @@ export function useApi(options: UseApiOptions = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`)
+    if (!res.ok) throw new Error(`API ${path} 请求失败 (${res.status})`)
     return res.json()
   }
 
@@ -34,7 +34,7 @@ export function useApi(options: UseApiOptions = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`)
+    if (!res.ok) throw new Error(`API ${path} 请求失败 (${res.status})`)
     return res.json()
   }
 

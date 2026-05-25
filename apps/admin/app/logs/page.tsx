@@ -79,7 +79,7 @@ function getLevelText(level: string): string {
 // ============ API Functions ============
 async function fetchLogStats(): Promise<LogStats> {
   const res = await fetch('/api/v1/admin/logs/stats')
-  if (!res.ok) throw new Error('Failed to fetch log stats')
+  if (!res.ok) throw new Error('日志统计加载失败')
   const data: ApiResponse<LogStats> = await res.json()
   return data.data
 }
@@ -93,7 +93,7 @@ async function fetchLogs(page: number = 1, pageSize: number = 20, filters: { lev
   if (filters.end_date) params.append('end_date', filters.end_date)
   
   const res = await fetch(`/api/v1/admin/logs?${params}`)
-  if (!res.ok) throw new Error('Failed to fetch logs')
+  if (!res.ok) throw new Error('日志列表加载失败')
   const data: ApiResponse<LogEntry[]> = await res.json()
   return { data: data.data || [], total: data.total || 0 }
 }
@@ -159,7 +159,7 @@ export default function LogsPage() {
       setTotal(logsData.total)
       setStats(statsData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data')
+      setError(err instanceof Error ? err.message : '数据加载失败')
     } finally {
       setLoading(false)
     }

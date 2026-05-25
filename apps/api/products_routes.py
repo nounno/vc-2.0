@@ -106,7 +106,7 @@ def get_product(product_id: int):
     cur.close()
     db.close()
     if not row:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail="商品不存在")
     return row
 
 

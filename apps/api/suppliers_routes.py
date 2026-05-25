@@ -37,13 +37,13 @@ def get_current_user(access_token: Optional[str] = None):
     # FastAPI cookies: accessed via Request object in real middleware
     # Here we accept token as header override for programmatic callers
     if not access_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail="未登录")
     try:
         payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
         role = payload.get("role")
         if not username:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(status_code=401, detail="令牌无效")
         db = get_db()
         cur = db.cursor()
         cur.execute("SELECT id, username, role FROM auth_users WHERE username=%s", (username,))
@@ -51,12 +51,12 @@ def get_current_user(access_token: Optional[str] = None):
         cur.close()
         db.close()
         if not row:
-            raise HTTPException(status_code=401, detail="User not found")
+            raise HTTPException(status_code=401, detail="用户不存在")
         return row
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="令牌已过期")
     except jwt.JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="令牌无效")
 
 # ─── Pydantic models ──────────────────────────────────────────────────────────
 class SupplierCreate(BaseModel):
@@ -148,7 +148,7 @@ def get_supplier(supplier_id: int):
     cur.close()
     db.close()
     if not row:
-        raise HTTPException(status_code=404, detail="Supplier not found")
+        raise HTTPException(status_code=404, detail="供应商不存在")
     return row
 
 
@@ -199,7 +199,7 @@ def update_supplier(supplier_id: int, payload: SupplierUpdate):
         fields.append("freshness=%s"); values.append(payload.freshness)
 
     if not fields:
-        raise HTTPException(status_code=400, detail="No fields to update")
+        raise HTTPException(status_code=400, detail="没有需要更新的字段")
 
     values.append(supplier_id)
     db = get_db()
@@ -208,7 +208,7 @@ def update_supplier(supplier_id: int, payload: SupplierUpdate):
     db.commit()
     if cur.rowcount == 0:
         cur.close(); db.close()
-        raise HTTPException(status_code=404, detail="Supplier not found")
+        raise HTTPException(status_code=404, detail="供应商不存在")
     cur.execute("SELECT * FROM suppliers WHERE id=%s", (supplier_id,))
     result = cur.fetchone()
     cur.close()
@@ -227,5 +227,5 @@ def delete_supplier(supplier_id: int):
     cur.close()
     db.close()
     if affected == 0:
-        raise HTTPException(status_code=404, detail="Supplier not found")
-    return {"message": "Supplier deleted", "id": supplier_id}
+        raise HTTPException(status_code=404, detail="供应商不存在")
+    return {"message": "供应商已删除", "id": supplier_id}

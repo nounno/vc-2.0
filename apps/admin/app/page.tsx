@@ -118,25 +118,25 @@ function getPriorityTextColor(priority: 'P0' | 'P1' | 'P2'): string {
 // ============ API Functions ============
 async function fetchKpiData(): Promise<KpiData> {
   const res = await fetch('/api/v1/datacenter/stats/overview')
-  if (!res.ok) throw new Error('Failed to fetch KPI data')
+  if (!res.ok) throw new Error('KPI 数据加载失败')
   return res.json()
 }
 
 async function fetchQualityData(): Promise<QualityData> {
   const res = await fetch('/api/v1/datacenter/quality/overview')
-  if (!res.ok) throw new Error('Failed to fetch quality data')
+  if (!res.ok) throw new Error('质量数据加载失败')
   return res.json()
 }
 
 async function fetchPendingQuotes(): Promise<PendingQuote[]> {
   const res = await fetch('/api/v1/quotes?status=pending')
-  if (!res.ok) throw new Error('Failed to fetch pending quotes')
+  if (!res.ok) throw new Error('待审核报价加载失败')
   return res.json()
 }
 
 async function fetchSuppliers(): Promise<Supplier[]> {
   const res = await fetch('/api/v1/suppliers')
-  if (!res.ok) throw new Error('Failed to fetch suppliers')
+  if (!res.ok) throw new Error('供应商数据加载失败')
   return res.json()
 }
 
