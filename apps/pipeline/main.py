@@ -1281,6 +1281,7 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
 
     records = []
     summary = {"total": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    llm_batch = LLMFallbackBatch()
 
     # Process each sheet independently with its own column mapping
     for sheet_name, rows in sheet_data:
@@ -1308,9 +1309,14 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
             raw_fields = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
             record = router.route(raw_fields, parsed_entities, reasoning, idx + 2, sheet_name=sheet_name)
             records.append(record)
+            llm_batch.add(record)
             tier = record["quality_tier"]
             summary[tier] += 1
             summary["total"] += 1
+
+    # LLM Fallback：批量处理低置信度记录
+    if llm_batch.batch:
+        llm_batch.call_llm()
 
     return {
         "status": "ok",
@@ -1326,6 +1332,87 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
 # Database Persistence — write parsed records to MySQL
 # ---------------------------------------------------------------------------
 LOW_QUALITY_THRESHOLD = 65.0  # confidence below this → is_low_quality=1
+LLM_FALLBACK_THRESHOLD = 65.0  # confidence below this + missing key fields → LLM fallback
+LLM_API_KEY = "sk-44b7bdcda8894647800b7654f6954a52"
+LLM_API_BASE = "https://api.deepseek.com/anthropic"
+LLM_MODEL = "deepseek-v4-pro"
+
+# ---------------------------------------------------------------------------
+# LLM Fallback Batch (Column Type Inference via LLM)
+# ---------------------------------------------------------------------------
+
+class LLMFallbackBatch:
+    """当正则匹配覆盖率低时，批量调用LLM重新推断列类型。"""
+
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or LLM_API_KEY
+        self.api_base = LLM_API_BASE
+        self.model = LLM_MODEL
+        self.batch: list[dict] = []
+
+    def should_fallback(self, record: dict) -> bool:
+        """双条件：conf < 65 且 brand+model 同时缺失"""
+        conf = record.get("confidence_score", 0.0)
+        parsed = record.get("parsed_entities", {})
+        brand_missing = "brand" not in parsed or parsed.get("brand", {}).get("value") is None
+        model_missing = "model" not in parsed or parsed.get("model", {}).get("value") is None
+        return conf < LLM_FALLBACK_THRESHOLD and brand_missing and model_missing
+
+    def add(self, record: dict):
+        if self.should_fallback(record):
+            self.batch.append(record)
+
+    def call_llm(self) -> list[dict]:
+        """批量调用LLM，重新推断列类型"""
+        if not self.batch:
+            return []
+
+        # 组装prompt（控制token预算，最多10条）
+        prompt_lines = ["你是家电产品数据解析专家。根据以下Excel列名和样本行，判断每列的语义类型。"]
+        prompt_lines.append("")
+        prompt_lines.append("允许的类型：brand, model, price, category, stock, quantity, warehouse, costPrice, suggestedPrice, text")
+        prompt_lines.append("")
+
+        for i, rec in enumerate(self.batch[:10]):
+            raw = rec.get("raw_fields", {})
+            headers = list(raw.keys())
+            values = list(raw.values())
+            sheet = rec.get("source_location", "").split(":")[0]
+            prompt_lines.append(f"### 记录{i+1} (Sheet: {sheet})")
+            prompt_lines.append(f"列名: {headers}")
+            prompt_lines.append(f"样本行: {values}")
+            prompt_lines.append("")
+
+        prompt_lines.append("请以JSON格式返回每列的类型映射（不含其他内容）：")
+        prompt_lines.append('{"col_0": "brand", "col_1": "model", ...}')
+
+        prompt = "\n".join(prompt_lines)
+
+        try:
+            import openai
+            client = openai.OpenAI(api_key=self.api_key, base_url=self.api_base)
+            resp = client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            content = resp.choices[0].message.content
+            # 解析JSON
+            import re, json
+            match = re.search(r"\{[\s\S]+\}", content)
+            if not match:
+                return self.batch
+            mapping = json.loads(match.group())
+            # 更新batch中记录的confidence（重新计算）
+            for rec in self.batch[:10]:
+                rec["llm_column_mapping"] = mapping
+                # 估算：LLM推断后confidence +20分
+                rec["confidence_score"] = min(100.0, rec["confidence_score"] + 20.0)
+                rec["quality_tier"] = quality_tier(rec["confidence_score"])
+        except Exception as e:
+            pass  # LLM失败，原样返回
+
+        return self.batch
 
 
 def _get_or_create_supplier(filename: str, conn) -> int | None:
