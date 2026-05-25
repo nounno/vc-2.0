@@ -4,7 +4,7 @@ Covers: brands, categories, columns, products, accounts, logs, pipeline
 """
 import math
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Any
 
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
@@ -122,11 +122,21 @@ class PipelineLog(BaseModel):
     created_at: Optional[datetime]
 
 
+class ApiResponse(BaseModel):
+    data: Any
+    total: Optional[int] = None
+    page: Optional[int] = None
+    page_size: Optional[int] = None
+
+
 class PipelineStats(BaseModel):
     total_tasks: int
     running_tasks: int
-    completed_today: int
-    avg_duration_sec: float
+    stopped_tasks: int
+    error_tasks: int
+    total_records_today: int
+    avg_duration_ms: float
+    success_rate: float
 
 
 # ---------------------------------------------------------------------------
@@ -444,18 +454,33 @@ def get_pipeline_stats():
     cur = db.cursor()
     cur.execute("SELECT COUNT(*) as total FROM correction_logs")
     total = cur.fetchone()["total"]
-    cur.execute("SELECT COUNT(*) as running FROM correction_logs WHERE status='applied'")
+    cur.execute("SELECT COUNT(*) as running FROM correction_logs WHERE status='running'")
     running = cur.fetchone()["running"]
+    cur.execute("SELECT COUNT(*) as stopped FROM correction_logs WHERE status='pending'")
+    stopped = cur.fetchone()["stopped"]
+    cur.execute("SELECT COUNT(*) as error FROM correction_logs WHERE status='failed'")
+    error = cur.fetchone()["error"]
     cur.execute("SELECT COUNT(*) as today FROM correction_logs WHERE DATE(applied_at)=CURDATE()")
     today = cur.fetchone()["today"]
+    cur.execute("SELECT COUNT(*) as records FROM correction_logs WHERE DATE(applied_at)=CURDATE()")
+    records_result = cur.fetchone()["records"]
+    total_records_today = records_result if records_result else 0
+    cur.execute("SELECT AVG(TIMESTAMPDIFF(SECOND, applied_at, verified_at)) as avg_duration FROM correction_logs WHERE verified_at IS NOT NULL")
+    avg_result = cur.fetchone()["avg_duration"]
+    avg_duration_ms = (avg_result * 1000.0) if avg_result else 0.0
+    # success_rate: completed / total
+    success_rate = (total - error) / total if total > 0 else 0.0
     cur.close()
     db.close()
-    return {
+    return ApiResponse(data={
         "total_tasks": total,
         "running_tasks": running,
-        "completed_today": today,
-        "avg_duration_sec": 0.0,
-    }
+        "stopped_tasks": stopped,
+        "error_tasks": error,
+        "total_records_today": total_records_today,
+        "avg_duration_ms": avg_duration_ms,
+        "success_rate": success_rate,
+    })
 
 
 @router.get("/pipeline/tasks")
@@ -500,27 +525,93 @@ def get_pipeline_tasks(
     rows = cur.fetchall()
     cur.close()
     db.close()
-    return {"data": [dict(r) for r in rows], "total": total, "page": page, "page_size": page_size}
+    # Map to PipelineTask interface
+    now = datetime.now().isoformat()
+    tasks = []
+    for r in rows:
+        started_at = r.get("started_at")
+        completed_at = r.get("completed_at")
+        # Calculate duration_ms
+        duration_ms = 0
+        if started_at and completed_at:
+            delta = (completed_at - started_at).total_seconds() * 1000
+            duration_ms = int(delta)
+        # Map task_type to valid type
+        raw_type = r.get("task_type", "")
+        type_map = {"quote": "batch", "sync": "sync", "async": "async", "batch": "batch", "realtime": "realtime"}
+        task_type = type_map.get(raw_type, "batch")
+        # Map status to valid status
+        raw_status = r.get("status", "")
+        status_map = {"applied": "completed", "failed": "error", "running": "running", "pending": "stopped"}
+        status = status_map.get(raw_status, "stopped")
+        tasks.append({
+            "id": str(r.get("id", "")),
+            "name": r.get("task_name", ""),
+            "description": "",
+            "type": task_type,
+            "status": status,
+            "schedule": "",
+            "last_run_at": started_at.isoformat() if started_at else "",
+            "next_run_at": "",
+            "duration_ms": duration_ms,
+            "progress": 100,
+            "records_processed": r.get("record_count", 0),
+            "error_message": r.get("error_message"),
+            "created_at": started_at.isoformat() if started_at else now,
+            "updated_at": completed_at.isoformat() if completed_at else now,
+        })
+    return ApiResponse(data=tasks, total=total, page=page, page_size=page_size)
 
 
 @router.get("/pipeline/logs")
-def get_pipeline_logs(limit: int = Query(20, ge=1, le=100)):
-    """Pipeline日志（从operation_logs读取，无则返回空）"""
+def get_pipeline_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """Pipeline日志（从operation_logs读取）"""
     db = get_db()
     cur = db.cursor()
     pattern = '%pipeline%'
+    cur.execute("""
+        SELECT COUNT(*) as total FROM operation_logs
+        WHERE module IN ('pipeline','datacenter','pipeline-rules','pipeline-parse','pipeline-dedup')
+           OR message LIKE %s
+    """, [pattern])
+    total = cur.fetchone()["total"]
+    offset = (page - 1) * page_size
     cur.execute("""
         SELECT id, level, module, message, created_at
         FROM operation_logs
         WHERE module IN ('pipeline','datacenter','pipeline-rules','pipeline-parse','pipeline-dedup')
            OR message LIKE %s
-        ORDER BY created_at DESC LIMIT %s
-    """, [pattern, limit])
+        ORDER BY created_at DESC LIMIT %s OFFSET %s
+    """, [pattern, page_size, offset])
     rows = cur.fetchall()
     cur.close()
     db.close()
-    # operation_logs 为空时返回空列表（前端可处理）
-    return {"data": [dict(r) for r in rows]}
+    # Map to PipelineLog interface
+    logs = []
+    for r in rows:
+        raw_level = r.get("level", "")
+        # Map level to status: INFO->started, ERROR->failed
+        if raw_level == "INFO":
+            status = "started"
+        elif raw_level == "ERROR":
+            status = "failed"
+        else:
+            status = "started"
+        logs.append({
+            "id": str(r.get("id", "")),
+            "task_id": "",
+            "task_name": r.get("module", ""),
+            "status": status,
+            "started_at": r.get("created_at").isoformat() if r.get("created_at") else "",
+            "completed_at": None,
+            "duration_ms": None,
+            "records_processed": 0,
+            "error_message": r.get("message"),
+        })
+    return ApiResponse(data=logs, total=total, page=page, page_size=page_size)
 
 
 @router.get("/pipeline/tasks/{task_id}/status")
