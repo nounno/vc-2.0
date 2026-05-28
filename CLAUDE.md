@@ -1,6 +1,6 @@
 # VC 2.0 项目规范
 
-> 维护者：Hermes（九月）| 最后更新：2026-05-24 | 源自：vc2-spec.md v2.0
+> 维护者：Hermes（九月）| 最后更新：2026-05-28 | 源自：vc2-spec.md v3.0
 >
 > CC 工具链变更（2026-05-24）：
 > - 新增 `.claude/commands/spec-review.md` — 规范合规审查
