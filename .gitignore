@@ -10,6 +10,11 @@ out/
 dist/
 build/
 
+# Build artifacts
+*.tsbuildinfo
+*.bak.*
+*.bak
+
 # Environment
 .env
 .env.local

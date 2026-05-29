@@ -3,7 +3,7 @@ import './globals.css'
 import PageContainer from './components/PageContainer'
 
 export const metadata: Metadata = {
-  title: '价值魔方管理后台',
+  title: 'ValueCube · 管理后台',
   description: 'ValueCube 数据管理后台',
 }
 

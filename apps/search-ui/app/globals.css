@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --vt-fg: #f8fafc;
+  --vt-fg-2: #cbd5e1;
+  --vt-muted: #64748b;
+  --vt-border: #263246;
+  --vt-border-soft: #1c2638;
+  --vt-accent: #38bdf8;
+  --vt-accent-on: #070b12;
+  --vt-surface: #101826;
+  --vt-surface-2: #162238;
+}
+
+body {
+  color: var(--vt-fg);
+  background: #070b12;
+}
+
+@layer utilities {
+  .max-w-container {
+    max-width: 1280px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}

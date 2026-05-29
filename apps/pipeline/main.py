@@ -18,7 +18,7 @@ import openpyxl
 import redis
 import mysql.connector
 from mysql.connector import pooling
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, UploadFile, Form
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -197,7 +197,8 @@ class IntakeLayer:
             max_col = ws.max_column
 
             # ── Forward-fill vertical spans (品类/品牌纵向合并格) ─────────────
-            FILL_COLS = {1, 2}
+            # Cover all columns up to 20 — merged brand/category headers can appear in any column
+            FILL_COLS = set(range(1, min(max_col + 1, 21)))
             for col in FILL_COLS:
                 last_val = ""
                 for r in range(1, max_row + 1):
@@ -208,6 +209,11 @@ class IntakeLayer:
                         cell_values[(r, col)] = last_val
 
             # ── Detect header row ─────────────────────────────────────────────
+            # Signal categories:
+            # 1. Normal headers: dense (ratio>=0.35) with mostly short labels (>=40%)
+            # 2. Compact headers: sparse but ALL non-empty cells are short labels (e.g. "型号/结构分类/专属价格")
+            #    → signals=1.0, nonempty_ratio threshold drops to 0.15
+            # 3. Merged title rows: low density AND some long text → skip
             HEADER_MIN_NONEMPTY_RATIO = 0.20
             HEADER_MIN_LABEL_RATIO = 0.40
             header_row_idx = None
@@ -217,13 +223,19 @@ class IntakeLayer:
                 if not non_empty:
                     continue
                 nonempty_ratio = len(non_empty) / max_col
-                label_ratio = sum(1 for v in non_empty if len(v) < 50) / len(non_empty)
-                # Skip merged title rows: very few non-empty cells (spread < 35%)
-                # e.g. "库存表" merged across 17 columns → spread=1/17=6%
-                if nonempty_ratio < 0.35 and len(non_empty) < 5:
+                short_labels = [v for v in non_empty if len(v) < 50]
+                label_ratio = len(short_labels) / len(non_empty) if non_empty else 0
+                # Signal 1: dense header with short labels → always accept
+                dense_header = (nonempty_ratio >= 0.35 and label_ratio >= HEADER_MIN_LABEL_RATIO)
+                # Signal 2: all non-empty cells are short labels (compact header like "型号/结构分类/专属价格")
+                # → lower density threshold, strong label signal
+                compact_header = (len(short_labels) == len(non_empty) and
+                                  len(non_empty) >= 2 and
+                                  nonempty_ratio >= 0.10)
+                # Skip merged title rows: very few non-empty cells (spread < 20%) with long text
+                if nonempty_ratio < 0.20 and len(non_empty) < 3:
                     continue
-                if (nonempty_ratio > HEADER_MIN_NONEMPTY_RATIO and
-                        label_ratio >= HEADER_MIN_LABEL_RATIO):
+                if dense_header or compact_header:
                     header_row_idx = r
                     break
 
@@ -427,12 +439,15 @@ class IntakeLayer:
                     non_empty = [v for v in row_vals if v.strip()]
                     if not non_empty:
                         continue
-                    nonempty_ratio = len(non_empty) / max_col
-                    label_ratio = sum(1 for v in non_empty if len(v) < 50) / len(non_empty)
-                    if nonempty_ratio < 0.35 and len(non_empty) < 5:
+                    short_labels = [v for v in non_empty if len(v) < 50]
+                    label_ratio = len(short_labels) / len(non_empty) if non_empty else 0
+                    dense_header = (nonempty_ratio >= 0.35 and label_ratio >= HEADER_MIN_LABEL_RATIO)
+                    compact_header = (len(short_labels) == len(non_empty) and
+                                      len(non_empty) >= 2 and
+                                      nonempty_ratio >= 0.10)
+                    if nonempty_ratio < 0.20 and len(non_empty) < 3:
                         continue
-                    if (nonempty_ratio > HEADER_MIN_NONEMPTY_RATIO and
-                            label_ratio >= HEADER_MIN_LABEL_RATIO):
+                    if dense_header or compact_header:
                         header_row_idx = r
                         break
 
@@ -472,13 +487,11 @@ _SUPPLIER_TEMPLATES: dict[str, dict] = {
     # 供应商25：两列表格，"型号"=model，"专属销售价"=price
     "5.25价格输出表": {
         "column_mapping": {0: "model", 1: "price"},
-        "fixed_fields": {"brand": "通用", "category": "空调"},
     },
     # 供应商18：第0列空，第5列是备注，第6列是价格
     "5月25日VIP专属价格输出表": {
         "column_mapping": {1: "brand", 2: "category", 3: "model",
                           4: "text", 5: "text", 6: "price"},
-        "fixed_fields": {},
     },
 }
 
@@ -509,13 +522,13 @@ class ColumnTyper:
             if re.search(r"品牌|brand|厂商|品牌名称|牌子", h_lower):
                 mapping[i] = "brand"
             # 品类（一级分类）
-            elif re.search(r"品类|category|分类|类型", h_lower):
+            elif re.search(r"^品类$|^品类/|^分类$|^商品分类$|^营销小类$|^产品分类$|^品类\s|category", h_lower):
                 mapping[i] = "category"
             # 型号
-            elif re.search(r"型号|model|货号|款式|商品型号|产品型号", h_lower):
+            elif re.search(r"型号|model|货号|款式|商品型号|产品型号|产品名称|商品名称", h_lower):
                 mapping[i] = "model"
             # 价格（支持多种列名）
-            elif re.search(r"价格|price|售价|单价|批发价|开票价|工程价|今日批价|供货价|专属销售价|最低零售价|明价|特价|活动价|会员价", h_lower):
+            elif re.search(r"价格|price|售价|单价|批发价|开票价|工程价|今日批价|供货价|专属销售价|最低零售价|明价|特价|活动价|会员价|政策价|提货底价|底价|分销价|美云销分销价|日销零售价|专属价格|专属定价|输出价|专属多台价|销售价|多台价|单台", h_lower):
                 mapping[i] = "price"
             # 库存/数量
             elif re.search(r"库存|stock|数量|存货|销量", h_lower):
@@ -535,10 +548,10 @@ class ColumnTyper:
             else:
                 # Try to infer from values
                 sample_vals = [row[i] if i < len(row) else "" for row in rows[:5]]
-                if all(self.PRICE_RE.match(v) for v in sample_vals if v):
-                    mapping[i] = "price"
-                elif all(self.INT_RE.match(v) for v in sample_vals if v):
+                if all(self.INT_RE.match(v) for v in sample_vals if v):
                     mapping[i] = "stock"
+                elif all(self.PRICE_RE.match(v) for v in sample_vals if v):
+                    mapping[i] = "price"
                 else:
                     mapping[i] = "text"
         return mapping
@@ -554,7 +567,7 @@ KNOWN_BRANDS = {
     "创维", "海信", "康佳", "康宝", "星星", "美菱", "奥马", "新科",
     "扬子", "科龙", "万和", "万家乐", "方太", "老板", "华帝",
     "林内", "能率", "史密斯", "沁园", "安吉尔", "云米", "佳尼特",
-    "火星人", "森歌", "美大", "名气", "雷鸟", "VIDAA", "酷开",
+    "火星人", "森歌", "美大", "名气", "小微", "雷鸟", "VIDAA", "酷开",
     "乐华", "哈士奇", "微果", "西屋",
 }
 KNOWN_CATEGORIES = {
@@ -733,6 +746,8 @@ KNOWN_BRANDS = {
     "星星", "美菱", "新科",
     # 互联网/其他
     "扬子", "科龙", "乐华", "哈士奇", "微果", "西屋",
+    # 补充品牌（从 ColumnTyper 品牌表同步）
+    "东芝", "飞利浦", "统帅", "康宝", "名气", "小微",
 }
 
 ## ── Category Inference ──────────────────────────────────────────────────────
@@ -1288,24 +1303,87 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
         headers = rows[0] if rows else []
         data_rows = rows[1:] if len(rows) > 1 else []
 
-        # ── Type-A 供应商模板优先匹配 ──
+        # ── Type-A 供应商模板优先匹配（per-sheet验证） ──
+        # 匹配必须在每个Sheet上单独验证，确保该模板的列映射真的适合这个Sheet
         template_key = _match_supplier_template(filename)
+        col_mapping = None
         if template_key:
             template = _SUPPLIER_TEMPLATES[template_key]
-            col_mapping = dict(template["column_mapping"])
-            fixed_fields = template.get("fixed_fields", {})
-        else:
+            h0 = str(headers[0]).lower() if headers and headers[0] else ""
+            # 验证首列是否是model相关关键字
+            if any(k in h0 for k in ["型号", "model", "货号"]):
+                # 额外验证：模板中价格列的实际值必须是数字
+                price_col = None
+                for col_idx, col_type in template["column_mapping"].items():
+                    if col_type == "price":
+                        price_col = col_idx
+                        break
+                if price_col is not None and data_rows and len(data_rows[0]) > price_col:
+                    price_val = data_rows[0][price_col]
+                    import re
+                    if re.match(r"^[\d,．.．]+$", str(price_val).strip()):
+                        col_mapping = dict(template["column_mapping"])
+        if col_mapping is None:
             col_mapping = typer.infer(headers, data_rows)
-            fixed_fields = {}
         extractor = EntityExtractor(col_mapping)
 
         for idx, row in enumerate(data_rows):
             parsed_entities, reasoning = extractor.extract(row, idx, sheet_name=sheet_name, conn=conn)
-            # ── 注入固定字段（Type-A 模板） ──
-            for field, value in fixed_fields.items():
-                if field not in parsed_entities:
-                    parsed_entities[field] = {"value": value, "confidence": 1.0}
-                    reasoning.append(f"模板固定字段: {field}={value}")
+            # ── 从Sheet名解析品牌+品类（当列头里缺失时） ──
+            _brand = None
+            _cat_raw = None
+            for brand in KNOWN_BRANDS:
+                if brand in sheet_name:
+                    _brand = brand
+                    _cat_raw = sheet_name.replace(brand, "")
+                    break
+            # 品牌注入
+            # 品牌注入：仅当Sheet名中的品牌是独立单一品牌时注入
+            # 排除"美小"这类组合别名（代表多个品牌，需从型号判断）
+            EXCLUDED_BRAND_ALIASES = {"美小"}  # 组合别名，不从Sheet名注品牌
+            if _brand and "brand" not in parsed_entities and _brand not in EXCLUDED_BRAND_ALIASES:
+                parsed_entities["brand"] = {"value": _brand, "confidence": 0.95}
+                reasoning.append(f"Sheet名品牌: {_brand}")
+            # 品类归一化：始终从Sheet名提取（即使没有匹配到品牌）
+            # "美小洗衣机" → 无品牌，但品类=洗衣机
+            # "美的冰箱" → 有品牌，品类=冰箱
+            if not _cat_raw:
+                _cat_raw = sheet_name  # 没有匹配到品牌时，用完整Sheet名提取品类
+            _cat_norm = None
+            if "冰洗" in _cat_raw:
+                _cat_norm = "冰箱"
+            elif "洗衣机" in _cat_raw:
+                _cat_norm = "洗衣机"
+            elif "空调" in _cat_raw:
+                _cat_norm = "空调"
+            elif "电视" in _cat_raw or _cat_raw.strip().upper() == "TV":
+                _cat_norm = "电视投影"
+            elif "热水器" in _cat_raw:
+                _cat_norm = "热水器"
+            elif "厨卫" in _cat_raw or "厨热" in _cat_raw:
+                _cat_norm = "厨卫"
+            if _cat_norm and "category" not in parsed_entities:
+                parsed_entities["category"] = {"value": _cat_norm, "confidence": 0.95}
+                reasoning.append(f"Sheet名品类: {_cat_norm}")
+            # 纯品牌Sheet（如"容声"/"创维"/"万和"/"酷开"）无品类关键词时，按品牌默认填充
+            BRAND_DEFAULT_CAT = {
+                "容声": "冰箱",
+                "万和": "厨卫",
+                "万宝": "冰箱",
+                "扬子": "空调",
+                "新科": "空调",
+                "华凌": "空调",
+                "康佳": "电视投影",
+                "创维": "电视投影",
+                "酷开": "电视投影",
+                "乐华": "电视投影",
+                "星星": "冰箱",
+                "奥马": "冰箱",
+                "美菱": "冰箱",
+            }
+            if _brand and "category" not in parsed_entities and _brand in BRAND_DEFAULT_CAT:
+                parsed_entities["category"] = {"value": BRAND_DEFAULT_CAT[_brand], "confidence": 0.80}
+                reasoning.append(f"品牌默认品类: {_brand}→{BRAND_DEFAULT_CAT[_brand]}")
             raw_fields = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
             record = router.route(raw_fields, parsed_entities, reasoning, idx + 2, sheet_name=sheet_name)
             records.append(record)
@@ -1334,8 +1412,8 @@ def run_pipeline(sheet_data: list[tuple[str, list[list[str]]]], ext: str, filena
 LOW_QUALITY_THRESHOLD = 65.0  # confidence below this → is_low_quality=1
 LLM_FALLBACK_THRESHOLD = 65.0  # confidence below this + missing key fields → LLM fallback
 LLM_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-LLM_API_BASE = "https://api.deepseek.com/anthropic"
-LLM_MODEL = "deepseek-v4-pro"
+LLM_API_BASE = "https://api.deepseek.com/v1"
+LLM_MODEL = "deepseek-v4-flash"
 
 # ---------------------------------------------------------------------------
 # LLM Fallback Batch (Column Type Inference via LLM)
@@ -1434,7 +1512,7 @@ def _get_or_create_supplier(filename: str, conn) -> int | None:
     # Derive supplier_code from filename (use first 64 chars of filename as code)
     supplier_code = safe_filename[:64]
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT id FROM suppliers WHERE supplier_code = %s", (supplier_code,))
+    cur.execute("SELECT id FROM supplier_files WHERE supplier_code = %s", (supplier_code,))
     row = cur.fetchone()
     if row:
         sid = row["id"]
@@ -1443,7 +1521,7 @@ def _get_or_create_supplier(filename: str, conn) -> int | None:
     # Create new supplier
     supplier_name = safe_filename.split("/")[-1].split(".")[0][:128]
     cur.execute(
-        "INSERT INTO suppliers (supplier_code, supplier_name, source_file, freshness, total_records) "
+        "INSERT INTO supplier_files (supplier_code, supplier_name, source_file, freshness, total_records) "
         "VALUES (%s, %s, %s, 'pending', 0)",
         (supplier_code, supplier_name, safe_filename),
     )
@@ -1477,7 +1555,7 @@ def _upsert_supplier_stats(supplier_id: int, records: list[dict], conn):
     parse_rate = (total - low_count) / total * 100 if total > 0 else 0
     cur = conn.cursor()
     cur.execute("""
-        UPDATE suppliers
+        UPDATE supplier_files
         SET total_records = %s,
             total_brands = %s,
             avg_price = %s,
@@ -1490,36 +1568,108 @@ def _upsert_supplier_stats(supplier_id: int, records: list[dict], conn):
     cur.close()
 
 
+def _extract_brand_from_filename(filename: str) -> str:
+    """Try to extract a known brand from the filename. Returns brand or ''."""
+    if not filename:
+        return ""
+    for brand in KNOWN_BRANDS:
+        if brand in filename:
+            return brand
+    return ""
+
+
 def persist_records_to_db(records: list[dict], filename: str, supplier_id: int | None = None) -> dict:
     """
     Write parsed records to MySQL supplier_quotes table.
     Auto-marks LOW quality_tier records as is_low_quality=1.
+    Requires supplier_id — no longer auto-creates suppliers from filename.
     Returns stats dict.
     """
     if not records:
         return {"inserted": 0, "low_quality": 0, "supplier_id": supplier_id}
 
+    if supplier_id is None:
+        import logging
+        logger = logging.getLogger("pipeline")
+        logger.warning(f"[pipeline] No supplier_id for file: {filename}")
+
+        # Try auto-detect from filename, then fallback to creating a default supplier
+        brand_in_filename = _extract_brand_from_filename(filename)
+        logger.warning(f"[pipeline] Brand extracted from filename: {brand_in_filename}")
+
+        if brand_in_filename:
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM supplier_files WHERE supplier_name LIKE %s LIMIT 1", (f"%{brand_in_filename}%",))
+                row = cur.fetchone()
+                if row:
+                    supplier_id = row[0]
+                    logger.warning(f"[pipeline] Found existing supplier: id={supplier_id}")
+                else:
+                    # Create a new supplier from the filename
+                    supplier_code = brand_in_filename.upper().replace(" ", "_")[:32]
+                    supplier_name = f"{brand_in_filename}上传数据"
+                    cur.execute(
+                        "INSERT INTO supplier_files (supplier_code, supplier_name, source_file, file_date, freshness, total_records) "
+                        "VALUES (%s, %s, %s, CURDATE(), 'pending', 0)",
+                        (supplier_code, supplier_name, filename),
+                    )
+                    supplier_id = cur.lastrowid
+                    logger.warning(f"[pipeline] Created new supplier: id={supplier_id}")
+                conn.commit()
+                cur.close()
+            finally:
+                conn.close()
+        else:
+            # Fallback: create a default supplier from the filename
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                safe_name = filename.replace('.xlsx','').replace('.csv','').replace('.','_').replace(' ','')[:64] or 'upload_data'
+                supplier_code = safe_name.upper()[:32]
+                cur.execute(
+                    "INSERT INTO supplier_files (supplier_code, supplier_name, source_file, file_date, freshness, total_records) "
+                    "VALUES (%s, %s, %s, CURDATE(), 'pending', 0)",
+                    (supplier_code, safe_name, filename),
+                )
+                supplier_id = cur.lastrowid
+                logger.warning(f"[pipeline] Created fallback supplier from filename: id={supplier_id}")
+                conn.commit()
+                cur.close()
+            finally:
+                conn.close()
+
     conn = get_db_connection()
     try:
-        if supplier_id is None:
-            supplier_id = _get_or_create_supplier(filename, conn)
-            if supplier_id is None:
-                return {"error": "could not get or create supplier", "inserted": 0}
-
         inserted = 0
         low_quality_count = 0
+        high_count = 0
+        medium_count = 0
         cur = conn.cursor()
 
         for record in records:
             parsed = record.get("parsed_entities", {})
             conf = record.get("confidence_score", 0.0)
-            tier = record.get("quality_tier", "MEDIUM")
-            is_low = 1 if conf < LOW_QUALITY_THRESHOLD else 0
+            llm_updated = "llm_column_mapping" in record
+            # LLM更新后用更新后的confidence重新算tier和is_low
+            if llm_updated:
+                updated_conf = record.get("confidence_score", 0)
+                tier = quality_tier(updated_conf)
+                is_low = 1 if updated_conf < LOW_QUALITY_THRESHOLD else 0
+            else:
+                tier = record.get("quality_tier", "MEDIUM")
+                is_low = 1 if conf < LOW_QUALITY_THRESHOLD else 0
 
             # Extract field values safely
             brand = parsed.get("brand", {}).get("value") if parsed.get("brand") else None
+            brand = (brand or "")[:64]  # Truncate to fit varchar(64)
+            if not brand and filename:
+                brand = _extract_brand_from_filename(filename)[:64]
             category = parsed.get("category", {}).get("value") if parsed.get("category") else None
+            category = (category or "")[:32]  # Truncate to fit varchar(32)
             model_raw = parsed.get("model", {}).get("value") if parsed.get("model") else None
+            model_raw = (model_raw or "")[:256]  # Truncate to fit varchar(256)
             model_std = (model_raw or "")[:128]  # Truncate to fit varchar(128)
             raw_price = parsed.get("price", {}).get("value") if parsed.get("price") else None
             # Explicitly convert to float and clamp to DECIMAL(10,2) safe range before INSERT
@@ -1558,6 +1708,10 @@ def persist_records_to_db(records: list[dict], filename: str, supplier_id: int |
             inserted += 1
             if is_low:
                 low_quality_count += 1
+            elif tier == "HIGH":
+                high_count += 1
+            elif tier == "MEDIUM":
+                medium_count += 1
 
         conn.commit()
         cur.close()
@@ -1567,6 +1721,8 @@ def persist_records_to_db(records: list[dict], filename: str, supplier_id: int |
 
         return {
             "inserted": inserted,
+            "high_count": high_count,
+            "medium_count": medium_count,
             "low_quality": low_quality_count,
             "supplier_id": supplier_id,
         }
@@ -1577,7 +1733,7 @@ def persist_records_to_db(records: list[dict], filename: str, supplier_id: int |
 # ---------------------------------------------------------------------------
 # Background Task Processing
 # ---------------------------------------------------------------------------
-async def process_task_async(task_id: str, sheet_data: list[tuple[str, list[list[str]]]], ext: str, filename: str):
+async def process_task_async(task_id: str, sheet_data: list[tuple[str, list[list[str]]]], ext: str, filename: str, supplier_id: int | None = None):
     """Background task: run pipeline, persist to MySQL, and store result in Redis."""
     r = get_redis()
     conn = None
@@ -1588,8 +1744,17 @@ async def process_task_async(task_id: str, sheet_data: list[tuple[str, list[list
         result["status"] = "completed"
 
         # Persist records to MySQL with confidence + auto low-quality marking
-        persist_stats = persist_records_to_db(result.get("records", []), filename)
+        persist_stats = persist_records_to_db(result.get("records", []), filename, supplier_id)
         result["db_persist"] = persist_stats
+        # If persist returned an error, mark as failed
+        if "error" in persist_stats:
+            result["status"] = "failed"
+            result["error"] = persist_stats["error"]
+        else:
+            # Propagate tier counts to result top-level for frontend
+            result["high_count"] = persist_stats.get("high_count", 0)
+            result["medium_count"] = persist_stats.get("medium_count", 0)
+            result["low_count"] = persist_stats.get("low_quality", 0)
 
         # Store result as JSON string with TTL
         r.setex(f"{RESULT_PREFIX}{task_id}", RESULT_TTL, json.dumps(result))
@@ -1615,7 +1780,7 @@ def health():
 
 
 @app.post("/pipeline/parse", response_model=TaskSubmitResponse)
-async def parse(file: UploadFile):
+async def parse(file: UploadFile, supplier_id: int | None = Form(None)):
     """
     Async intake: writes to Redis Streams and returns task_id immediately.
     Does NOT wait for parsing to complete.
@@ -1647,7 +1812,7 @@ async def parse(file: UploadFile):
 
     # Trigger background processing
     import asyncio
-    asyncio.create_task(process_task_async(task_id, sheet_data, ext, file.filename))
+    asyncio.create_task(process_task_async(task_id, sheet_data, ext, file.filename, supplier_id))
 
     return TaskSubmitResponse(
         task_id=task_id,

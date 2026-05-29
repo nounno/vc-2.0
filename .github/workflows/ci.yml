@@ -11,6 +11,19 @@ env:
   NODE_VERSION: '20'
 
 jobs:
+  compliance-check:
+    name: Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run compliance checks
+        run: |
+          chmod +x .claude/scripts/check-compliance.sh
+          bash .claude/scripts/check-compliance.sh
+
   lint-and-test-api:
     name: Lint and Test API
     runs-on: ubuntu-latest
@@ -177,7 +190,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint-and-test-api, test-admin-build, test-docker-config, security-scan, deploy-check]
+    needs: [compliance-check, lint-and-test-api, test-admin-build, test-docker-config, security-scan, deploy-check]
     
     steps:
       - name: Summary

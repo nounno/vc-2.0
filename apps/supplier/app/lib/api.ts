@@ -1,170 +1,178 @@
 const API_BASE = '/api/v1'
-const PIPELINE_BASE = ''
+const PIPELINE_BASE = '/api/v1'
 
-export interface TaskResult {
-  status: string
-  result?: {
-    high_count?: number
-    medium_count?: number
-    low_count?: number
-    records?: Array<{
-      row_number: number
-      model: string
-      brand: string
-      error_type?: string
-      quality_tier?: string
-    }>
+// ============ JWT helpers (cookie-based) ============
+interface JwtPayload {
+  sub?: string
+  role?: string
+  supplier_id?: number
+  [key: string]: unknown
+}
+
+function parseJwt(token: string): JwtPayload | null {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return payload
+  } catch {
+    return null
   }
 }
 
-export interface QuoteRecord {
-  id: string
-  file_name: string
-  submitted_at: string
-  quality_tier: string
-  record_count: number
+function getTokenFromCookie(): string {
+  if (typeof document === 'undefined') return ''
+  const match = document.cookie.match(/(?:^|;\s*)(vc_session|access_token)=([^;]*)/)
+  return match ? decodeURIComponent(match[2]) : ''
+}
+
+function getSupplierIdFromCookie(): number | undefined {
+  const token = getTokenFromCookie()
+  if (!token) return undefined
+  const payload = parseJwt(token)
+  return payload?.supplier_id
+}
+
+// ============ Types ============
+export interface TaskResult {
   status: string
+  result?: { high_count?: number; medium_count?: number; low_count?: number }
+}
+
+export interface QuoteRecord {
+  id: number
+  supplier_id: number
+  supplier_name: string
+  brand: string | null
+  category: string | null
+  model_raw: string | null
+  model_std: string | null
+  price: number | null
+  price_type: string | null
+  quality_tier: string
+  is_low_quality: number
+  confidence: number
+  error_type: string | null
+  created_at: string
+}
+
+export interface QuoteDetail extends QuoteRecord {
+  raw_row: Record<string, unknown> | null
 }
 
 export interface SupplierProfile {
-  id: string
-  name: string
-  contact: string
-  email: string
-  categories: string[]
-  quality_score: number
-  last_submission?: string
+  id: number
+  supplier_code: string
+  supplier_name: string
+  source_file: string | null
+  file_date: string | null
+  data_quality_score: number
+  parse_success_rate: number
+  price_tier: string
+  freshness: string
+  total_records: number
+  total_brands: number
+  avg_price: number
+  created_at: string
+  updated_at: string
 }
+
+// ============ API functions (use hook pattern with credentials: 'include') ============
 
 export async function uploadQuoteFile(file: File): Promise<{ task_id: string }> {
   const formData = new FormData()
   formData.append('file', file)
-
+  const supplierId = getSupplierIdFromCookie()
+  if (supplierId) {
+    formData.append('supplier_id', String(supplierId))
+  }
   const response = await fetch(`${PIPELINE_BASE}/pipeline/parse`, {
     method: 'POST',
+    credentials: 'include',
     body: formData,
   })
-
-  if (!response.ok) {
-    throw new Error('文件上传失败')
-  }
-
+  if (!response.ok) throw new Error('文件上传失败')
   return response.json()
 }
 
 export async function getTaskResult(task_id: string): Promise<TaskResult> {
   const response = await fetch(`${PIPELINE_BASE}/pipeline/result/${task_id}`, {
-    method: 'GET',
+    credentials: 'include',
   })
-
-  if (!response.ok) {
-    throw new Error('获取任务结果失败')
-  }
-
+  if (!response.ok) throw new Error('获取任务结果失败')
   return response.json()
 }
 
 export async function getQuoteHistory(
   supplier_id?: string,
-  status?: string,
+  quality_tier?: string,
   page: number = 1
-): Promise<{ records: QuoteRecord[]; total: number }> {
+): Promise<{ quotes: QuoteRecord[]; total: number }> {
   const params = new URLSearchParams()
   if (supplier_id) params.append('supplier_id', supplier_id)
-  if (status) params.append('status', status)
+  if (quality_tier) params.append('quality_tier', quality_tier)
   params.append('page', page.toString())
   params.append('page_size', '10')
-
-  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
   const response = await fetch(`${API_BASE}/quotes?${params.toString()}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
+    credentials: 'include',
   })
-
-  if (!response.ok) {
-    throw new Error('获取报价历史失败')
-  }
-
+  if (!response.ok) throw new Error('获取报价历史失败')
   return response.json()
 }
 
-export async function getQualityFeedback(
-  supplier_id?: string
-): Promise<{ records: Array<{ row_number: number; model: string; brand: string; error_type: string; id: string }> }> {
-  const params = new URLSearchParams()
-  if (supplier_id) params.append('supplier_id', supplier_id)
-
-  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
-  const response = await fetch(`${API_BASE}/feedback?${params.toString()}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
+export async function getQuoteDetail(id: number): Promise<QuoteDetail> {
+  const response = await fetch(`${API_BASE}/quotes/${id}`, {
+    credentials: 'include',
   })
-
-  if (!response.ok) {
-    throw new Error('获取质量反馈失败')
-  }
-
+  if (!response.ok) throw new Error('获取报价详情失败')
   return response.json()
 }
 
-export async function getSupplierProfile(supplier_id: string): Promise<SupplierProfile> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
-  const response = await fetch(`${API_BASE}/suppliers/${supplier_id}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error('获取供应商档案失败')
-  }
-
-  return response.json()
-}
-
-export async function getSupplierSummary(supplier_id?: string): Promise<{
+export interface SupplierSummary {
   quality_score: number
   total_records: number
   high_count: number
   medium_count: number
   low_count: number
   last_submission?: string
-}> {
-  const params = new URLSearchParams()
-  if (supplier_id) params.append('supplier_id', supplier_id)
+}
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('vc_session') : ''
-  const response = await fetch(`${API_BASE}/summary?${params.toString()}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
+export async function getSupplierProfile(): Promise<SupplierProfile> {
+  const supplierId = getSupplierIdFromCookie()
+  if (!supplierId) throw new Error('获取供应商档案失败')
+  const response = await fetch(`${API_BASE}/suppliers/${supplierId}`, {
+    credentials: 'include',
   })
-
-  if (!response.ok) {
-    throw new Error('获取汇总信息失败')
-  }
-
+  if (!response.ok) throw new Error('获取供应商档案失败')
   return response.json()
 }
 
-export async function resubmitRecord(record_id: string, data: Record<string, string>): Promise<{ task_id: string }> {
-  const response = await fetch(`${PIPELINE_BASE}/pipeline/resubmit`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ record_id, ...data }),
-  })
-
-  if (!response.ok) {
-    throw new Error('重新提交失败')
+export async function getSupplierSummary(): Promise<SupplierSummary> {
+  const supplierId = getSupplierIdFromCookie()
+  if (!supplierId) return { quality_score: 0, total_records: 0, high_count: 0, medium_count: 0, low_count: 0 }
+  try {
+    const params = new URLSearchParams({ supplier_id: String(supplierId), page: '1', page_size: '200' })
+    const response = await fetch(`${API_BASE}/quotes?${params.toString()}`, {
+      credentials: 'include',
+    })
+    if (!response.ok) throw new Error('Failed')
+    const data = await response.json()
+    const quotes: QuoteRecord[] = data.quotes || []
+    const high = quotes.filter((q) => q.quality_tier === 'HIGH').length
+    const medium = quotes.filter((q) => q.quality_tier === 'MEDIUM').length
+    const low = quotes.filter((q) => q.quality_tier === 'LOW').length
+    const avgConf = quotes.length > 0
+      ? Math.round(quotes.reduce((sum, q) => sum + q.confidence, 0) / quotes.length)
+      : 0
+    return {
+      quality_score: avgConf,
+      total_records: data.total || quotes.length,
+      high_count: high,
+      medium_count: medium,
+      low_count: low,
+      last_submission: quotes.length > 0 ? quotes[0].created_at : undefined,
+    }
+  } catch {
+    return { quality_score: 0, total_records: 0, high_count: 0, medium_count: 0, low_count: 0 }
   }
-
-  return response.json()
 }

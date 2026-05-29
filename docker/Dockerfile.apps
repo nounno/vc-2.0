@@ -2,8 +2,9 @@
 
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+RUN npm install -g pnpm
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -15,7 +16,7 @@ ARG NEXT_PUBLIC_PIPELINE_BASE
 ENV NEXT_PUBLIC_APP_NAME=$APP_NAME
 ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
 ENV NEXT_PUBLIC_PIPELINE_BASE=$NEXT_PUBLIC_PIPELINE_BASE
-RUN mkdir -p public && npm run build
+RUN mkdir -p public && pnpm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app

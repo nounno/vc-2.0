@@ -81,11 +81,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:3004 || nc -z localhost:3004"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:3004 || nc -z localhost 3004"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  search-ui:
+    build:
+      context: ./apps/search-ui
+      dockerfile: ../../docker/Dockerfile.search-ui
+    container_name: vc2_search_ui
+    environment:
+      - NEXT_PUBLIC_APP_NAME=search-ui
+      - NEXT_PUBLIC_API_URL=/api/v1
+    networks:
+      - vc2_internal
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:3005 || nc -z localhost 3005"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   search:
     build:
@@ -129,6 +150,8 @@ services:
       - MYSQL_USER=${MYSQL_USER}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - SECRET_KEY=${SECRET_KEY:-vc2-api-secret-key-dev}
     networks:
       - vc2_internal
     depends_on:
@@ -234,15 +257,19 @@ services:
 
   nginx:
     build:
-      context: ./docker
-      dockerfile: Dockerfile.nginx
+      context: .
+      dockerfile: docker/Dockerfile.nginx
     container_name: vc2_nginx
     networks:
       - vc2_internal
+    ports:
+      - "80:80"
+      - "443:443"
     depends_on:
       - admin
       - supplier
       - web
+      - search-ui
       - search
       - api
     restart: unless-stopped

@@ -86,6 +86,24 @@ function getGradeColor(grade: string): string {
   }
 }
 
+// Field name translation: API returns English field names, display Chinese
+const fieldNameMap: Record<string, string> = {
+  'category': '品类',
+  'brand': '品牌',
+  'price': '价格',
+  'quality_tier': '质量层级',
+  'power': '功率',
+  'model': '型号',
+  'model_std': '标准型号',
+  'model_raw': '原始型号',
+  'error_type': '错误类型',
+  'freshness': '数据新鲜度',
+}
+
+function translateField(field: string): string {
+  return fieldNameMap[field] || field
+}
+
 function formatTimeAgo(dateString: string): string {
   const now = new Date()
   const date = new Date(dateString)
@@ -145,7 +163,7 @@ export default function QualityAuditPage() {
   const fetchItems = useCallback(async () => {
     try {
       setLoading(true)
-      const res = await fetch(`${API_BASE}/quotes/low-confidence?page=1&page_size=30`)
+      const res = await fetch(`${API_BASE}/quotes/low-confidence?page=1&page_size=20`)
       if (res.ok) {
         const data = await res.json()
         // Map API response to component's expected field names
@@ -153,12 +171,12 @@ export default function QualityAuditPage() {
           id: String(q.id),
           supplier_name: q.supplier_name || '',
           product_name: q.model_raw || q.model_std || '',
-          field_name: q.error_type || 'category',
+          field_name: q.error_type || '品类',
           confidence_score: q.confidence || 0,
           current_value: q.model_std || '',
           suggested_value: '',
           evidence: [],
-          reason: q.error_type || '',
+          reason: q.reason || q.error_type || '待审核',
           category: q.category || '',
           brand: q.brand || '',
           price: q.price || 0,
@@ -170,80 +188,8 @@ export default function QualityAuditPage() {
     } catch (error) {
       console.error('Failed to fetch low confidence items:', error)
       setError('数据加载失败')
-      // Fallback to mock data for demo
-      const mockData: LowConfidenceItem[] = [
-        {
-          id: '1',
-          supplier_name: '南宁恒升电器',
-          product_name: '格力空调 KFR-35GW',
-          field_name: 'price',
-          confidence_score: 45.2,
-          current_value: '3299',
-          suggested_value: '2899',
-          evidence: ['同类产品价格区间2800-3100', '上月报价2999'],
-          reason: '价格偏离市场正常范围',
-          category: '空调',
-          brand: '格力',
-          price: 3299,
-          created_at: new Date(Date.now() - 3600000).toISOString()
-        },
-        {
-          id: '2',
-          supplier_name: '南宁圣玛电器',
-          product_name: '美的冰箱 BCD-520WKPZM',
-          field_name: 'brand',
-          confidence_score: 52.8,
-          current_value: '美的',
-          evidence: ['品牌识别置信度低于阈值'],
-          reason: '品牌字段解析置信度低',
-          category: '冰箱',
-          brand: '美的',
-          created_at: new Date(Date.now() - 7200000).toISOString()
-        },
-        {
-          id: '3',
-          supplier_name: '日报价格输出',
-          product_name: '海尔洗衣机 XQB80',
-          field_name: 'price',
-          confidence_score: 38.5,
-          current_value: '999999.99',
-          suggested_value: '1999',
-          evidence: ['异常高价标记', '数值超出合理范围'],
-          reason: '价格数据异常，可能为占位符',
-          category: '洗衣机',
-          brand: '海尔',
-          price: 999999.99,
-          created_at: new Date(Date.now() - 10800000).toISOString()
-        },
-        {
-          id: '4',
-          supplier_name: '大客户报价表',
-          product_name: '三菱电机空调',
-          field_name: 'power',
-          confidence_score: 61.3,
-          current_value: '1.5匹',
-          evidence: ['功率单位需标准化'],
-          reason: '功率单位格式不统一',
-          category: '空调',
-          brand: '三菱',
-          created_at: new Date(Date.now() - 14400000).toISOString()
-        },
-        {
-          id: '5',
-          supplier_name: 'UNKNOWN',
-          product_name: '松下冰箱',
-          field_name: 'category',
-          confidence_score: 28.7,
-          current_value: '未知',
-          evidence: ['分类识别失败'],
-          reason: '无法确定产品分类',
-          category: '未知',
-          brand: '松下',
-          created_at: new Date(Date.now() - 18000000).toISOString()
-        }
-      ]
-      setItems(mockData)
-      setFilteredItems(mockData)
+      setItems([])
+      setFilteredItems([])
     } finally {
       setLoading(false)
     }
@@ -260,7 +206,7 @@ export default function QualityAuditPage() {
           id: String(q.id),
           supplier_name: q.supplier_name || '',
           product_name: q.model_std || q.model_raw || '',
-          field_name: q.error_type || 'category',
+          field_name: q.error_type || '品类',
           value: String(q.price || ''),
           confidence: q.confidence || 0,
         }))
@@ -527,7 +473,7 @@ export default function QualityAuditPage() {
                           {item.field_name}
                         </span>
                         <span className="text-xs text-gray-500 truncate max-w-[120px]">
-                          {item.current_value}
+                          {item.current_value || '暂无'}
                         </span>
                       </div>
                     </div>
@@ -571,6 +517,36 @@ export default function QualityAuditPage() {
                   <span className="text-sm text-gray-400">% 置信度</span>
                 </div>
               </div>
+
+            {/* Quick Action Bar */}
+            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-800">
+              <button
+                onClick={() => handleDecision('skip')}
+                className="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 text-white text-sm px-3 py-2 rounded-lg transition-colors"
+              >
+                <SkipForward className="w-4 h-4" /> 跳过
+              </button>
+              <button
+                onClick={() => handleDecision('reject')}
+                className="flex items-center gap-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 text-sm px-3 py-2 rounded-lg transition-colors"
+              >
+                <XCircle className="w-4 h-4" /> 拒绝
+              </button>
+              {corrections.length > 0 && (
+                <button
+                  onClick={() => handleDecision('correct')}
+                  className="flex items-center gap-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm px-3 py-2 rounded-lg transition-colors"
+                >
+                  <Edit3 className="w-4 h-4" /> 修正({corrections.length})
+                </button>
+              )}
+              <button
+                onClick={() => handleDecision('approve')}
+                className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm px-5 py-2 rounded-lg font-medium transition-colors ml-auto"
+              >
+                <CheckCircle className="w-4 h-4" /> 通过
+              </button>
+            </div>
 
               {/* Tab Navigation */}
               <div className="flex gap-1 bg-gray-800/50 rounded-lg p-1 w-fit">
@@ -619,7 +595,7 @@ export default function QualityAuditPage() {
                       </div>
                       <div className="bg-gray-800/50 rounded-xl p-4">
                         <div className="text-xs text-gray-400 mb-1">当前值</div>
-                        <div className="text-white font-medium">{selectedItem.current_value}</div>
+                        <div className="text-white font-medium">{selectedItem.current_value || '暂无'}</div>
                       </div>
                       {selectedItem.category && (
                         <div className="bg-gray-800/50 rounded-xl p-4">
@@ -665,7 +641,7 @@ export default function QualityAuditPage() {
                                 <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
                                 <div>
                                   <div className="text-sm font-medium text-red-300">
-                                    {uf.field}
+                                    {translateField(uf.field)}
                                     <span className="ml-2 text-xs bg-red-500/30 px-1.5 py-0.5 rounded">
                                       {uf.confidence?.toFixed(1)}%
                                     </span>
@@ -690,7 +666,7 @@ export default function QualityAuditPage() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-0.5">
                                   <span className="text-xs font-medium text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">
-                                    {r.field}
+                                    {translateField(r.field)}
                                   </span>
                                   <span className={`text-xs font-bold ${
                                     r.confidence < 70 ? 'text-orange-400' : 'text-green-400'
@@ -736,7 +712,7 @@ export default function QualityAuditPage() {
                           type="text"
                           value={newCorrection.field}
                           onChange={(e) => setNewCorrection(prev => ({ ...prev, field: e.target.value }))}
-                          placeholder="如: price"
+                          placeholder="如: 价格"
                           className="w-full bg-gray-800 text-white text-sm rounded-lg px-3 py-2 border border-gray-700 focus:border-blue-500 focus:outline-none"
                         />
                       </div>

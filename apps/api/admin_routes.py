@@ -6,28 +6,12 @@ import math
 from datetime import datetime
 from typing import Optional, List, Any
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from pydantic import BaseModel
 
+from app.auth import get_db, require_auth
+
 router = APIRouter(tags=["admin"])
-
-# ---------------------------------------------------------------------------
-# DB helper
-# ---------------------------------------------------------------------------
-import os
-
-def get_db():
-    import pymysql
-    return pymysql.connect(
-        host=os.getenv("MYSQL_HOST", "mysql"),
-        port=int(os.getenv("MYSQL_PORT", 3306)),
-        user="valuecube",
-        password="Vc@2026#db",
-        database="valuecube",
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True,
-        charset='utf8mb4',
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -143,44 +127,53 @@ class PipelineStats(BaseModel):
 # 1. /suppliers/quality  → brands page
 # ---------------------------------------------------------------------------
 @router.get("/suppliers/quality")
-def get_suppliers_quality():
+def get_suppliers_quality(current_user: dict = Depends(require_auth())):
     """返回各供应商质量数据，供品牌管理页面展示"""
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("""
-        SELECT supplier_code, supplier_name, total_brands, total_records,
-               data_quality_score, avg_price, freshness
-        FROM suppliers ORDER BY data_quality_score DESC
-    """)
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
-    # 补上brands统计
-    for r in rows:
-        cur2 = db.cursor() if False else None
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("""
+            SELECT id, supplier_name, total_brands, total_records,
+                   data_quality_score, avg_price, freshness
+            FROM supplier_files ORDER BY data_quality_score DESC
+        """)
+        rows = cur.fetchall()
+        cur.close()
     return {"suppliers": [
-        {**dict(r), "brand_count": 0} for r in rows
+        {**dict(r), "brand_count": r.get("total_brands") or 0} for r in rows
     ]}
+
+# ── suppliers/freshness ───────────────────────────────────────────────────
+@router.get("/suppliers/freshness")
+def get_suppliers_freshness(current_user: dict = Depends(require_auth())):
+    """返回供应商数据新鲜度"""
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("SELECT supplier_name, freshness, updated_at FROM supplier_files")
+        rows = cur.fetchall()
+        cur.close()
+    return {"suppliers": [dict(r) for r in rows]}
 
 
 # ---------------------------------------------------------------------------
 # 2. /categories/price-bands  → categories page
 # ---------------------------------------------------------------------------
 @router.get("/categories/price-bands")
-def get_price_bands():
+def get_price_bands(current_user: dict = Depends(require_auth())):
     """返回品类价格带，供品类管理页面展示"""
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("""
-        SELECT id, category,
-               price_min, price_max, price_avg, price_p25, price_p75,
-               sample_count, brand, updated_at
-        FROM category_price_bands
-        ORDER BY category, price_min
-    """)
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("""
+            SELECT id,
+                   CONVERT(BINARY(CONVERT(category USING latin1)) USING utf8mb4) as category,
+                   price_min, price_max, price_avg, price_p25, price_p75,
+                   sample_count,
+                   CONVERT(BINARY(CONVERT(brand USING latin1)) USING utf8mb4) as brand,
+                   updated_at
+            FROM category_price_bands
+            ORDER BY category, price_min
+        """)
+        rows = cur.fetchall()
+        cur.close()
     return {"price_bands": [dict(r) for r in rows]}
 
 
@@ -189,41 +182,41 @@ def get_price_bands():
 # ---------------------------------------------------------------------------
 @router.get("/columns")
 def get_columns(
+    current_user: dict = Depends(require_auth()),
     source_table: Optional[str] = None,
     std_col: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
     """返回列名映射配置"""
-    db = get_db()
-    cur = db.cursor()
+    with get_db() as db:
+        cur = db.cursor()
 
-    where = []
-    params = []
-    if source_table:
-        where.append("source_table = %s")
-        params.append(source_table)
-    if std_col:
-        where.append("std_col = %s")
-        params.append(std_col)
+        where = []
+        params = []
+        if source_table:
+            where.append("source_table = %s")
+            params.append(source_table)
+        if std_col:
+            where.append("std_col = %s")
+            params.append(std_col)
 
-    where_clause = " AND ".join(where) if where else "1=1"
+        where_clause = " AND ".join(where) if where else "1=1"
 
-    cur.execute(f"SELECT COUNT(*) as total FROM column_mappings WHERE {where_clause}", params)
-    total = cur.fetchone()["total"]
+        cur.execute(f"SELECT COUNT(*) as total FROM column_mappings WHERE {where_clause}", params)
+        total = cur.fetchone()["total"]
 
-    offset = (page - 1) * page_size
-    cur.execute(f"""
-        SELECT id, source_table, source_col, std_col, data_type,
-               transform_rule, is_active, created_at
-        FROM column_mappings
-        WHERE {where_clause}
-        ORDER BY source_table, source_col
-        LIMIT %s OFFSET %s
-    """, params + [page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT id, source_table, source_col, std_col, data_type,
+                   transform_rule, is_active, created_at
+            FROM column_mappings
+            WHERE {where_clause}
+            ORDER BY source_table, source_col
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
 
     return {
         "data": [dict(r) for r in rows],
@@ -239,6 +232,7 @@ def get_columns(
 # ---------------------------------------------------------------------------
 @router.get("/products")
 def get_products(
+    current_user: dict = Depends(require_auth()),
     search: Optional[str] = None,
     brand: Optional[str] = None,
     category: Optional[str] = None,
@@ -246,40 +240,42 @@ def get_products(
     page_size: int = Query(20, ge=1, le=100),
 ):
     """返回标准商品列表（分页）"""
-    db = get_db()
-    cur = db.cursor()
+    with get_db() as db:
+        cur = db.cursor()
 
-    where = []
-    params = []
-    if search:
-        where.append("(brand LIKE %s OR model_std LIKE %s OR model_raw LIKE %s)")
-        p = f"%{search}%"
-        params.extend([p, p, p])
-    if brand:
-        where.append("brand = %s")
-        params.append(brand)
-    if category:
-        where.append("category = %s")
-        params.append(category)
+        where = []
+        params = []
+        if search:
+            where.append("(brand LIKE %s OR model_std LIKE %s OR model_raw LIKE %s)")
+            p = f"%{search}%"
+            params.extend([p, p, p])
+        if brand:
+            where.append("brand = %s")
+            params.append(brand)
+        if category:
+            where.append("category = %s")
+            params.append(category)
 
-    where_clause = " AND ".join(where) if where else "1=1"
+        where_clause = " AND ".join(where) if where else "1=1"
 
-    cur.execute(f"SELECT COUNT(*) as total FROM std_products WHERE {where_clause}", params)
-    total = cur.fetchone()["total"]
+        cur.execute(f"SELECT COUNT(*) as total FROM std_products WHERE {where_clause}", params)
+        total = cur.fetchone()["total"]
 
-    offset = (page - 1) * page_size
-    cur.execute(f"""
-        SELECT id, product_uuid, brand, category, model_std, model_raw,
-               horsepower, volume_l, capacity_kg, screen_size,
-               subsidy_code, created_at
-        FROM std_products
-        WHERE {where_clause}
-        ORDER BY id DESC
-        LIMIT %s OFFSET %s
-    """, params + [page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT id, product_uuid,
+                   CONVERT(BINARY(CONVERT(brand USING latin1)) USING utf8mb4) as brand,
+                   CONVERT(BINARY(CONVERT(category USING latin1)) USING utf8mb4) as category,
+                   model_std, model_raw,
+                   horsepower, volume_l, capacity_kg, screen_size,
+                   subsidy_code, created_at
+            FROM std_products
+            WHERE {where_clause}
+            ORDER BY id DESC
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
 
     return {
         "data": [dict(r) for r in rows],
@@ -295,37 +291,37 @@ def get_products(
 # ---------------------------------------------------------------------------
 @router.get("/admin/accounts")
 def get_accounts(
+    current_user: dict = Depends(require_auth()),
     search: Optional[str] = None,
     status: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
 ):
     """返回账号列表"""
-    db = get_db()
-    cur = db.cursor()
+    with get_db() as db:
+        cur = db.cursor()
 
-    # admins 表只有 username
-    where = []
-    params = []
-    if search:
-        where.append("username LIKE %s")
-        params.append(f"%{search}%")
-    where_clause = " AND ".join(where) if where else "1=1"
+        # admins 表只有 username
+        where = []
+        params = []
+        if search:
+            where.append("username LIKE %s")
+            params.append(f"%{search}%")
+        where_clause = " AND ".join(where) if where else "1=1"
 
-    cur.execute(f"SELECT COUNT(*) as total FROM admins WHERE {where_clause}", params)
-    total = cur.fetchone()["total"]
+        cur.execute(f"SELECT COUNT(*) as total FROM admins WHERE {where_clause}", params)
+        total = cur.fetchone()["total"]
 
-    offset = (page - 1) * page_size
-    cur.execute(f"""
-        SELECT id, username, created_at
-        FROM admins
-        WHERE {where_clause}
-        ORDER BY id DESC
-        LIMIT %s OFFSET %s
-    """, params + [page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT id, username, created_at
+            FROM admins
+            WHERE {where_clause}
+            ORDER BY id DESC
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
 
     # 补齐前端需要的字段
     data = []
@@ -348,14 +344,13 @@ def get_accounts(
 
 
 @router.get("/admin/accounts/stats")
-def get_accounts_stats():
+def get_accounts_stats(current_user: dict = Depends(require_auth())):
     """账号统计"""
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("SELECT COUNT(*) as total FROM admins")
-    total = cur.fetchone()["total"]
-    cur.close()
-    db.close()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) as total FROM admins")
+        total = cur.fetchone()["total"]
+        cur.close()
     return {
         "total_accounts": total,
         "active_accounts": total,
@@ -370,6 +365,7 @@ def get_accounts_stats():
 # ---------------------------------------------------------------------------
 @router.get("/admin/logs")
 def get_logs(
+    current_user: dict = Depends(require_auth()),
     level: Optional[str] = None,
     module: Optional[str] = None,
     search: Optional[str] = None,
@@ -379,68 +375,66 @@ def get_logs(
     page_size: int = Query(20, ge=1, le=100),
 ):
     """返回操作日志（分页）"""
-    db = get_db()
-    cur = db.cursor()
+    with get_db() as db:
+        cur = db.cursor()
 
-    where = []
-    params = []
-    if level:
-        where.append("level = %s")
-        params.append(level)
-    if module:
-        where.append("module = %s")
-        params.append(module)
-    if search:
-        where.append("message LIKE %s")
-        params.append(f"%{search}%")
-    if start_date:
-        where.append("created_at >= %s")
-        params.append(start_date)
-    if end_date:
-        where.append("created_at <= %s")
-        params.append(end_date)
+        where = []
+        params = []
+        if level:
+            where.append("level = %s")
+            params.append(level)
+        if module:
+            where.append("module = %s")
+            params.append(module)
+        if search:
+            where.append("message LIKE %s")
+            params.append(f"%{search}%")
+        if start_date:
+            where.append("created_at >= %s")
+            params.append(start_date)
+        if end_date:
+            where.append("created_at <= %s")
+            params.append(end_date)
 
-    where_clause = " AND ".join(where) if where else "1=1"
+        where_clause = " AND ".join(where) if where else "1=1"
 
-    cur.execute(f"SELECT COUNT(*) as total FROM operation_logs WHERE {where_clause}", params)
-    total = cur.fetchone()["total"]
+        cur.execute(f"SELECT COUNT(*) as total FROM operation_logs WHERE {where_clause}", params)
+        total = cur.fetchone()["total"]
 
-    offset = (page - 1) * page_size
-    cur.execute(f"""
-        SELECT id, level, module, action, message, operator,
-               target_type, target_id, ip_address, created_at
-        FROM operation_logs
-        WHERE {where_clause}
-        ORDER BY created_at DESC
-        LIMIT %s OFFSET %s
-    """, params + [page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT id, level, module, action, message, operator,
+                   target_type, target_id, ip_address, created_at
+            FROM operation_logs
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
 
     return {"data": [dict(r) for r in rows], "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/admin/logs/stats")
-def get_logs_stats():
+def get_logs_stats(current_user: dict = Depends(require_auth())):
     """日志统计"""
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("SELECT COUNT(*) as total FROM operation_logs")
-    total = cur.fetchone()["total"]
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) as total FROM operation_logs")
+        total = cur.fetchone()["total"]
 
-    cur.execute("""
-        SELECT level, COUNT(*) as cnt FROM operation_logs GROUP BY level
-    """)
-    by_level = {r["level"]: r["cnt"] for r in cur.fetchall()}
+        cur.execute("""
+            SELECT level, COUNT(*) as cnt FROM operation_logs GROUP BY level
+        """)
+        by_level = {r["level"]: r["cnt"] for r in cur.fetchall()}
 
-    cur.execute("""
-        SELECT module, COUNT(*) as cnt FROM operation_logs GROUP BY module ORDER BY cnt DESC LIMIT 10
-    """)
-    by_module = {r["module"]: r["cnt"] for r in cur.fetchall()}
+        cur.execute("""
+            SELECT module, COUNT(*) as cnt FROM operation_logs GROUP BY module ORDER BY cnt DESC LIMIT 10
+        """)
+        by_module = {r["module"]: r["cnt"] for r in cur.fetchall()}
 
-    cur.close()
-    db.close()
+        cur.close()
     return {"total": total, "by_level": by_level, "by_module": by_module}
 
 
@@ -448,34 +442,58 @@ def get_logs_stats():
 # 7. /pipeline/*  → pipeline page
 # ---------------------------------------------------------------------------
 @router.get("/pipeline/stats")
-def get_pipeline_stats():
-    """Pipeline统计"""
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("SELECT COUNT(*) as total FROM correction_logs")
-    total = cur.fetchone()["total"]
-    cur.execute("SELECT COUNT(*) as running FROM correction_logs WHERE status='running'")
-    running = cur.fetchone()["running"]
-    cur.execute("SELECT COUNT(*) as stopped FROM correction_logs WHERE status='pending'")
-    stopped = cur.fetchone()["stopped"]
-    cur.execute("SELECT COUNT(*) as error FROM correction_logs WHERE status='failed'")
-    error = cur.fetchone()["error"]
-    cur.execute("SELECT COUNT(*) as today FROM correction_logs WHERE DATE(applied_at)=CURDATE()")
-    today = cur.fetchone()["today"]
-    cur.execute("SELECT COUNT(*) as records FROM correction_logs WHERE DATE(applied_at)=CURDATE()")
-    records_result = cur.fetchone()["records"]
-    total_records_today = records_result if records_result else 0
-    cur.execute("SELECT AVG(TIMESTAMPDIFF(SECOND, applied_at, verified_at)) as avg_duration FROM correction_logs WHERE verified_at IS NOT NULL")
-    avg_result = cur.fetchone()["avg_duration"]
-    avg_duration_ms = (avg_result * 1000.0) if avg_result else 0.0
-    # success_rate: completed / total
-    success_rate = (total - error) / total if total > 0 else 0.0
-    cur.close()
-    db.close()
+def get_pipeline_stats(current_user: dict = Depends(require_auth())):
+    """Pipeline统计 — 真实数据源：supplier_files(任务) + supplier_quotes(记录)"""
+    with get_db() as db:
+        cur = db.cursor()
+
+        # 总任务数 = supplier_files 中有实际数据的供应商
+        cur.execute("""
+            SELECT COUNT(*) as total FROM supplier_files
+            WHERE total_records > 0 OR source_file IS NOT NULL
+        """)
+        total = cur.fetchone()["total"]
+
+        # 运行中任务 = freshness='live' 的供应商
+        cur.execute("SELECT COUNT(*) as running FROM supplier_files WHERE freshness='live'")
+        running = cur.fetchone()["running"]
+
+        # 待处理任务 = freshness='pending'
+        cur.execute("SELECT COUNT(*) as pending FROM supplier_files WHERE freshness='pending'")
+        pending = cur.fetchone()["pending"]
+
+        # 错误任务（暂用freshness='archived'标记失败）
+        cur.execute("SELECT COUNT(*) as error FROM supplier_files WHERE freshness='archived'")
+        error = cur.fetchone()["error"]
+
+        # 今日入库记录数
+        cur.execute("""
+            SELECT COUNT(*) as today FROM supplier_quotes
+            WHERE DATE(created_at) = CURDATE()
+        """)
+        today_result = cur.fetchone()["today"]
+        total_records_today = today_result if today_result else 0
+
+        # 总入库记录数
+        cur.execute("SELECT COUNT(*) as records FROM supplier_quotes")
+        total_records = cur.fetchone()["records"]
+
+        # 成功率 = 有quality_tier的记录中高置信度占比
+        cur.execute("""
+            SELECT COUNT(*) as high_quality FROM supplier_quotes
+            WHERE quality_tier = 'HIGH'
+        """)
+        high_quality = cur.fetchone()["high_quality"]
+        success_rate = (high_quality / total_records) if total_records > 0 else 0.0
+
+        # avg_duration_ms：暂无correction_logs时间戳，先设为0
+        avg_duration_ms = 0.0
+
+        cur.close()
     return ApiResponse(data={
         "total_tasks": total,
         "running_tasks": running,
-        "stopped_tasks": stopped,
+        "stopped_tasks": pending,
         "error_tasks": error,
         "total_records_today": total_records_today,
         "avg_duration_ms": avg_duration_ms,
@@ -485,110 +503,113 @@ def get_pipeline_stats():
 
 @router.get("/pipeline/tasks")
 def get_pipeline_tasks(
+    current_user: dict = Depends(require_auth()),
     status: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    """Pipeline任务列表（基于correction_logs按批次聚合）"""
-    db = get_db()
-    cur = db.cursor()
+    """Pipeline任务列表 — 真实数据源：supplier_files"""
+    with get_db() as db:
+        cur = db.cursor()
 
-    # 按 entity_type + DATE 分组，模拟任务批次
-    where = []
-    params = []
-    if status:
-        where.append("status = %s")
-        params.append(status)
+        # 状态过滤映射：前端status → supplier_files.freshness
+        freshness_map = {
+            "running": "live",
+            "stopped": "pending",
+            "error": "archived",
+            "completed": "live",
+        }
+        where = []
+        params = []
+        if status and status != "all":
+            freshness = freshness_map.get(status)
+            if freshness:
+                where.append("freshness = %s")
+                params.append(freshness)
 
-    where_clause = " AND ".join(where) if where else "1=1"
+        where_clause = " AND ".join(where) if where else "1=1"
 
-    cur.execute(f"SELECT COUNT(*) as total FROM correction_logs WHERE {where_clause}", params)
-    total = cur.fetchone()["total"]
+        cur.execute(f"SELECT COUNT(*) as total FROM supplier_files WHERE {where_clause}", params)
+        total = cur.fetchone()["total"]
 
-    offset = (page - 1) * page_size
-    cur.execute(f"""
-        SELECT
-            MIN(id) as id,
-            entity_type as task_name,
-            entity_type as task_type,
-            status,
-            MIN(applied_at) as started_at,
-            MAX(applied_at) as completed_at,
-            COUNT(*) as record_count,
-            NULL as error_message
-        FROM correction_logs
-        WHERE {where_clause}
-        GROUP BY entity_type, DATE(applied_at), status
-        ORDER BY MIN(applied_at) DESC
-        LIMIT %s OFFSET %s
-    """, params + [page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
-    # Map to PipelineTask interface
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT
+                id,
+                supplier_name,
+                supplier_code,
+                source_file,
+                total_records,
+                freshness,
+                data_quality_score,
+                parse_success_rate,
+                avg_price,
+                created_at,
+                updated_at
+            FROM supplier_files
+            WHERE {where_clause}
+            ORDER BY updated_at DESC
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
+
     now = datetime.now().isoformat()
     tasks = []
     for r in rows:
-        started_at = r.get("started_at")
-        completed_at = r.get("completed_at")
-        # Calculate duration_ms
-        duration_ms = 0
-        if started_at and completed_at:
-            delta = (completed_at - started_at).total_seconds() * 1000
-            duration_ms = int(delta)
-        # Map task_type to valid type
-        raw_type = r.get("task_type", "")
-        type_map = {"quote": "batch", "sync": "sync", "async": "async", "batch": "batch", "realtime": "realtime"}
-        task_type = type_map.get(raw_type, "batch")
-        # Map status to valid status
-        raw_status = r.get("status", "")
-        status_map = {"applied": "completed", "failed": "error", "running": "running", "pending": "stopped"}
-        status = status_map.get(raw_status, "stopped")
+        freshness = r.get("freshness", "pending")
+        status_map = {
+            "live": "running",
+            "pending": "stopped",
+            "archived": "error",
+            "valid": "completed",
+        }
+        task_status = status_map.get(freshness, "stopped")
         tasks.append({
             "id": str(r.get("id", "")),
-            "name": r.get("task_name", ""),
-            "description": "",
-            "type": task_type,
-            "status": status,
+            "name": r.get("supplier_name", "未知供应商"),
+            "description": r.get("source_file") or "",
+            "type": "batch",
+            "status": task_status,
             "schedule": "",
-            "last_run_at": started_at.isoformat() if started_at else "",
+            "last_run_at": r.get("updated_at").isoformat() if r.get("updated_at") else "",
             "next_run_at": "",
-            "duration_ms": duration_ms,
-            "progress": 100,
-            "records_processed": r.get("record_count", 0),
-            "error_message": r.get("error_message"),
-            "created_at": started_at.isoformat() if started_at else now,
-            "updated_at": completed_at.isoformat() if completed_at else now,
+            "duration_ms": 0,
+            "progress": int(r.get("parse_success_rate", 0) or 0),
+            "records_processed": r.get("total_records", 0) or 0,
+            "error_message": None,
+            "created_at": r.get("created_at").isoformat() if r.get("created_at") else now,
+            "updated_at": r.get("updated_at").isoformat() if r.get("updated_at") else now,
         })
     return ApiResponse(data=tasks, total=total, page=page, page_size=page_size)
 
 
 @router.get("/pipeline/logs")
 def get_pipeline_logs(
+    current_user: dict = Depends(require_auth()),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """Pipeline日志（从operation_logs读取）"""
-    db = get_db()
-    cur = db.cursor()
-    pattern = '%pipeline%'
-    cur.execute("""
-        SELECT COUNT(*) as total FROM operation_logs
-        WHERE module IN ('pipeline','datacenter','pipeline-rules','pipeline-parse','pipeline-dedup')
-           OR message LIKE %s
-    """, [pattern])
-    total = cur.fetchone()["total"]
-    offset = (page - 1) * page_size
-    cur.execute("""
-        SELECT id, level, module, message, created_at
-        FROM operation_logs
-        WHERE module IN ('pipeline','datacenter','pipeline-rules','pipeline-parse','pipeline-dedup')
-           OR message LIKE %s
-        ORDER BY created_at DESC LIMIT %s OFFSET %s
-    """, [pattern, page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+    with get_db() as db:
+        cur = db.cursor()
+        pattern = '%pipeline%'
+        cur.execute("""
+            SELECT COUNT(*) as total FROM operation_logs
+            WHERE module IN ('pipeline','datacenter','pipeline-rules','pipeline-parse','pipeline-dedup')
+               OR message LIKE %s
+        """, [pattern])
+        total = cur.fetchone()["total"]
+        offset = (page - 1) * page_size
+        cur.execute("""
+            SELECT id, level, module, message, created_at
+            FROM operation_logs
+            WHERE module IN ('pipeline','datacenter','pipeline-rules','pipeline-parse','pipeline-dedup')
+               OR message LIKE %s
+            ORDER BY created_at DESC LIMIT %s OFFSET %s
+        """, [pattern, page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
     # Map to PipelineLog interface
     logs = []
     for r in rows:
@@ -615,20 +636,19 @@ def get_pipeline_logs(
 
 
 @router.get("/pipeline/tasks/{task_id}/status")
-def get_pipeline_task_status(task_id: int):
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("SELECT id, action as task_name, 'completed' as status FROM correction_logs WHERE id=%s", [task_id])
-    row = cur.fetchone()
-    cur.close()
-    db.close()
+def get_pipeline_task_status(task_id: int, current_user: dict = Depends(require_auth())):
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("SELECT id, action as task_name, 'completed' as status FROM correction_logs WHERE id=%s", [task_id])
+        row = cur.fetchone()
+        cur.close()
     if not row:
         raise HTTPException(status_code=404, detail="任务不存在")
     return dict(row)
 
 
 @router.post("/pipeline/tasks/{task_id}/trigger")
-def trigger_pipeline_task(task_id: int):
+def trigger_pipeline_task(task_id: int, current_user: dict = Depends(require_auth())):
     return {"message": "triggered", "task_id": task_id}
 
 
@@ -636,19 +656,19 @@ def trigger_pipeline_task(task_id: int):
 # 8. /admin/brands  → brands page
 # --------------------------------------------------------------------------
 @router.get("/admin/brands")
-def get_admin_brands():
+def get_admin_brands(current_user: dict = Depends(require_auth())):
     """获取品牌列表及商品数量"""
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("""
-        SELECT brand, COUNT(*) as product_count
-        FROM std_products
-        GROUP BY brand
-        ORDER BY product_count DESC
-    """)
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("""
+            SELECT CONVERT(BINARY(CONVERT(brand USING latin1)) USING utf8mb4) as brand,
+                   COUNT(*) as product_count
+            FROM std_products
+            GROUP BY CONVERT(BINARY(CONVERT(brand USING latin1)) USING utf8mb4)
+            ORDER BY product_count DESC
+        """)
+        rows = cur.fetchall()
+        cur.close()
     return {"brands": [dict(r) for r in rows], "total": len(rows)}
 
 
@@ -656,19 +676,19 @@ def get_admin_brands():
 # 9. /admin/categories  → categories page
 # --------------------------------------------------------------------------
 @router.get("/admin/categories")
-def get_admin_categories():
+def get_admin_categories(current_user: dict = Depends(require_auth())):
     """获取品类列表及商品数量"""
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("""
-        SELECT category, COUNT(*) as product_count
-        FROM std_products
-        GROUP BY category
-        ORDER BY product_count DESC
-    """)
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute("""
+            SELECT CONVERT(BINARY(CONVERT(category USING latin1)) USING utf8mb4) as category,
+                   COUNT(*) as product_count
+            FROM std_products
+            GROUP BY CONVERT(BINARY(CONVERT(category USING latin1)) USING utf8mb4)
+            ORDER BY product_count DESC
+        """)
+        rows = cur.fetchall()
+        cur.close()
     return {"categories": [dict(r) for r in rows], "total": len(rows)}
 
 
@@ -677,27 +697,27 @@ def get_admin_categories():
 # --------------------------------------------------------------------------
 @router.get("/admin/columns")
 def get_admin_columns(
+    current_user: dict = Depends(require_auth()),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
     """获取字段映射配置"""
-    db = get_db()
-    cur = db.cursor()
+    with get_db() as db:
+        cur = db.cursor()
 
-    cur.execute("SELECT COUNT(*) as total FROM column_mappings")
-    total = cur.fetchone()["total"]
+        cur.execute("SELECT COUNT(*) as total FROM column_mappings")
+        total = cur.fetchone()["total"]
 
-    offset = (page - 1) * page_size
-    cur.execute("""
-        SELECT id, source_table, source_col, std_col, data_type,
-               transform_rule, is_active, created_at
-        FROM column_mappings
-        ORDER BY source_table, source_col
-        LIMIT %s OFFSET %s
-    """, [page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+        offset = (page - 1) * page_size
+        cur.execute("""
+            SELECT id, source_table, source_col, std_col, data_type,
+                   transform_rule, is_active, created_at
+            FROM column_mappings
+            ORDER BY source_table, source_col
+            LIMIT %s OFFSET %s
+        """, [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
 
     return {
         "columns": [dict(r) for r in rows],

@@ -1,67 +1,28 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { User, Mail, Phone, Package, Calendar, TrendingUp, Loader2 } from 'lucide-react'
-import { getSupplierProfile, getSupplierSummary } from '../lib/api'
-
-interface SupplierProfile {
-  id: string
-  name: string
-  contact: string
-  email: string
-  categories: string[]
-  quality_score: number
-  last_submission?: string
-}
-
-interface SupplierSummary {
-  quality_score: number
-  total_records: number
-  high_count: number
-  medium_count: number
-  low_count: number
-  last_submission?: string
-}
+import { User, Package, Calendar, TrendingUp, Loader2 } from 'lucide-react'
+import { getSupplierProfile, getSupplierSummary, SupplierProfile, SupplierSummary } from '../lib/api'
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<SupplierProfile | null>(null)
   const [summary, setSummary] = useState<SupplierSummary | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Mock supplier ID for demo - in real app would come from auth
-  const supplierId = 'supplier-001'
-
   useEffect(() => {
     fetchData()
-  }, [supplierId])
+  }, [])
 
   const fetchData = async () => {
     setLoading(true)
     try {
       const [profileRes, summaryRes] = await Promise.all([
-        getSupplierProfile(supplierId),
-        getSupplierSummary(supplierId),
+        getSupplierProfile(),
+        getSupplierSummary(),
       ])
       setProfile(profileRes)
       setSummary(summaryRes)
     } catch {
-      // Use mock data for demo
-      setProfile({
-        id: supplierId,
-        name: '深圳华强电子有限公司',
-        contact: '张经理',
-        email: 'zhang@hqelectronic.com',
-        categories: ['手机', '平板电脑', '智能穿戴'],
-        quality_score: 87,
-        last_submission: new Date(Date.now() - 86400000 * 2).toISOString(),
-      })
-      setSummary({
-        quality_score: 87,
-        total_records: 1245,
-        high_count: 892,
-        medium_count: 298,
-        low_count: 55,
-        last_submission: new Date(Date.now() - 86400000 * 2).toISOString(),
-      })
+      // API failed — show empty state
     }
     setLoading(false)
   }
@@ -104,41 +65,33 @@ export default function ProfilePage() {
               <User className="w-8 h-8 text-[#3b82f6]" />
             </div>
             <div>
-              <h3 className="text-white font-medium text-lg">{profile?.name}</h3>
-              <p className="text-[#666] text-sm">供应商ID: {profile?.id}</p>
+              <h3 className="text-white font-medium text-lg">{profile?.supplier_name}</h3>
+              <p className="text-[#666] text-sm">编号: {profile?.supplier_code}</p>
             </div>
           </div>
 
           <div className="space-y-4">
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#0a0a0a]">
-              <User className="w-4 h-4 text-[#666]" />
+              <Package className="w-4 h-4 text-[#666]" />
               <div>
-                <p className="text-xs text-[#666]">联系人</p>
-                <p className="text-white text-sm">{profile?.contact}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#0a0a0a]">
-              <Mail className="w-4 h-4 text-[#666]" />
-              <div>
-                <p className="text-xs text-[#666]">邮箱</p>
-                <p className="text-white text-sm">{profile?.email}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#0a0a0a]">
-              <Phone className="w-4 h-4 text-[#666]" />
-              <div>
-                <p className="text-xs text-[#666]">联系电话</p>
-                <p className="text-white text-sm">138-****-8888</p>
+                <p className="text-xs text-[#666]">价格带</p>
+                <p className="text-white text-sm">{profile?.price_tier || '-'}</p>
               </div>
             </div>
 
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#0a0a0a]">
               <Calendar className="w-4 h-4 text-[#666]" />
               <div>
-                <p className="text-xs text-[#666]">最近提交</p>
-                <p className="text-white text-sm">{formatDate(summary?.last_submission)}</p>
+                <p className="text-xs text-[#666]">最近更新</p>
+                <p className="text-white text-sm">{formatDate(profile?.updated_at)}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#0a0a0a]">
+              <TrendingUp className="w-4 h-4 text-[#666]" />
+              <div>
+                <p className="text-xs text-[#666]">数据文件</p>
+                <p className="text-white text-sm">{profile?.source_file || '-'}</p>
               </div>
             </div>
           </div>
@@ -207,17 +160,24 @@ export default function ProfilePage() {
 
         {/* Categories */}
         <div className="border border-[#262626] rounded-xl bg-[#111111] p-6 lg:col-span-2">
-          <h2 className="text-lg font-semibold text-white mb-4">经营品类</h2>
-          <div className="flex flex-wrap gap-2">
-            {profile?.categories?.map((cat) => (
-              <span
-                key={cat}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm bg-[#3b82f6]/20 text-[#3b82f6] border border-[#3b82f6]/30"
-              >
-                <Package className="w-3 h-3" />
-                {cat}
-              </span>
-            ))}
+          <h2 className="text-lg font-semibold text-white mb-4">数据概览</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-4 rounded-lg bg-[#0a0a0a] text-center">
+              <p className="text-2xl font-bold text-white">{profile?.total_records || 0}</p>
+              <p className="text-xs text-[#666]">总记录数</p>
+            </div>
+            <div className="p-4 rounded-lg bg-[#0a0a0a] text-center">
+              <p className="text-2xl font-bold text-white">{profile?.total_brands || 0}</p>
+              <p className="text-xs text-[#666]">品牌数</p>
+            </div>
+            <div className="p-4 rounded-lg bg-[#0a0a0a] text-center">
+              <p className="text-2xl font-bold text-white">{profile?.avg_price || 0}</p>
+              <p className="text-xs text-[#666]">平均价格</p>
+            </div>
+            <div className="p-4 rounded-lg bg-[#0a0a0a] text-center">
+              <p className="text-2xl font-bold text-white">{profile?.parse_success_rate ? `${profile.parse_success_rate}%` : '-'}</p>
+              <p className="text-xs text-[#666]">解析成功率</p>
+            </div>
           </div>
         </div>
       </div>
